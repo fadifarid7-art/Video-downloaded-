@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sandbox Share</title>
+<style>
+:root{--bg:#f3f5f8;--surface:#fff;--line:#dde2ea;--fg:#18202c;--muted:#5c6778;--accent:#2456d6;--accent-ink:#fff;--video:#7a3fd1;--image:#0f7f6c}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141b;--surface:#171e28;--line:#283242;--fg:#e6ebf2;--muted:#93a0b3;--accent:#6f95ff;--accent-ink:#0b1220;--video:#b48cff;--image:#4fd1b5;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.wrap{max-width:1040px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 120px max(16px,env(safe-area-inset-left))}
+.crumbs{font:12.5px ui-monospace,Menlo,monospace;color:var(--muted)}
+h1{font-size:1.6rem;margin:6px 0 4px}
+.meta{color:var(--muted);font-size:14px}
+.note{margin:16px 0;padding:10px 12px;border:1px dashed var(--line);border-radius:8px;color:var(--muted);font-size:13.5px;max-width:70ch}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.btn{font:inherit;font-weight:600;border-radius:8px;padding:10px 16px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--fg);text-decoration:none}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr));gap:10px}
+.file{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.thumb{position:relative;display:block;aspect-ratio:3/2;background:var(--line)}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.badge{position:absolute;left:8px;bottom:8px;font:600 11px ui-monospace,Menlo,monospace;text-transform:uppercase;padding:2px 6px;border-radius:4px;color:#fff}
+.badge.videos{background:var(--video)}.badge.images{background:var(--image)}
+.info{padding:9px 11px 11px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.name{font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub{font:12px ui-monospace,Menlo,monospace;color:var(--muted);display:flex;gap:10px}
+.dl{align-self:flex-start;font-size:13.5px;font-weight:600;color:var(--accent);text-decoration:none}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="crumbs">sandbox-share / f / t3st-f0ld3r-0001</div>
+  <h1>Downloader test folder</h1>
+  <div class="meta">9 files · 4.41 MB · generated test media, safe to save</div>
+  <p class="note">Every file is synthetic: test patterns, colour bars, fractals and gradients. Each <b>Download</b> is a real file link, so Aloha, Safari or Chrome handle it with their own download manager. Tap <b>Run downloader</b> to open the same panel the bookmarklet adds to other sites.</p>
+  <div class="tools">
+    <button class="btn primary" id="run">Run downloader</button>
+    <a class="btn" href="files/sandbox-share-all.zip" download="sandbox-share-all.zip">Download all as ZIP</a>
+    <a class="btn" href="../install/">Install bookmarklet</a>
+  </div>
+  <div class="grid" id="filesGrid" data-zip-url="files/sandbox-share-all.zip">
+    <div class="file" data-type="videos" data-name="test-pattern.mp4" data-size="514414" data-url="files/test-pattern.mp4" data-thumb="thumbs/test-pattern.jpg">
+      <a class="thumb" href="files/test-pattern.mp4"><img src="thumbs/test-pattern.jpg" alt="" loading="lazy"><span class="badge videos">Video</span></a>
+      <div class="info"><div class="name">test-pattern.mp4</div><div class="sub"><span>502.4 KB</span><span>0:05</span></div>
+      <a class="dl" href="files/test-pattern.mp4" download="test-pattern.mp4">Download</a></div>
+    </div>
+    <div class="file" data-type="videos" data-name="color-bars.mp4" data-size="5518" data-url="files/color-bars.mp4" data-thumb="thumbs/color-bars.jpg">
+      <a class="thumb" href="files/color-bars.mp4"><img src="thumbs/color-bars.jpg" alt="" loading="lazy"><span class="badge videos">Video</span></a>
+      <div class="info"><div class="name">color-bars.mp4</div><div class="sub"><span>5.4 KB</span><span>0:04</span></div>
+      <a class="dl" href="files/color-bars.mp4" download="color-bars.mp4">Download</a></div>
+    </div>
+    <div class="file" data-type="videos" data-name="fractal-zoom.mp4" data-size="1070535" data-url="files/fractal-zoom.mp4" data-thumb="thumbs/fractal-zoom.jpg">
+      <a class="thumb" href="files/fractal-zoom.mp4"><img src="thumbs/fractal-zoom.jpg" alt="" loading="lazy"><span class="badge videos">Video</span></a>
+      <div class="info"><div class="name">fractal-zoom.mp4</div><div class="sub"><span>1.02 MB</span><span>0:06</span></div>
+      <a class="dl" href="files/fractal-zoom.mp4" download="fractal-zoom.mp4">Download</a></div>
+    </div>
+    <div class="file" data-type="videos" data-name="cell-life.mp4" data-size="2064528" data-url="files/cell-life.mp4" data-thumb="thumbs/cell-life.jpg">
+      <a class="thumb" href="files/cell-life.mp4"><img src="thumbs/cell-life.jpg" alt="" loading="lazy"><span class="badge videos">Video</span></a>
+      <div class="info"><div class="name">cell-life.mp4</div><div class="sub"><span>1.97 MB</span><span>0:06</span></div>
+      <a class="dl" href="files/cell-life.mp4" download="cell-life.mp4">Download</a></div>
+    </div>
+    <div class="file" data-type="images" data-name="gradient-sunset.jpg" data-size="27736" data-url="files/gradient-sunset.jpg" data-thumb="thumbs/gradient-sunset.jpg">
+      <a class="thumb" href="files/gradient-sunset.jpg"><img src="thumbs/gradient-sunset.jpg" alt="" loading="lazy"><span class="badge images">Image</span></a>
+      <div class="info"><div class="name">gradient-sunset.jpg</div><div class="sub"><span>27.1 KB</span><span>1200×800</span></div>
+      <a class="dl" href="files/gradient-sunset.jpg" download="gradient-sunset.jpg">Download</a></div>
+    </div>
+    <div class="file" data-type="images" data-name="fractal-still.jpg" data-size="201071" data-url="files/fractal-still.jpg" data-thumb="thumbs/fractal-still.jpg">
+      <a class="thumb" href="files/fractal-still.jpg"><img src="thumbs/fractal-still.jpg" alt="" loading="lazy"><span class="badge images">Image</span></a>
+      <div class="info"><div class="name">fractal-still.jpg</div><div class="sub"><span>196.4 KB</span><span>1200×800</span></div>
+      <a class="dl" href="files/fractal-still.jpg" download="fractal-still.jpg">Download</a></div>
+    </div>
+    <div class="file" data-type="images" data-name="test-card.png" data-size="28421" data-url="files/test-card.png" data-thumb="thumbs/test-card.jpg">
+      <a class="thumb" href="files/test-card.png"><img src="thumbs/test-card.jpg" alt="" loading="lazy"><span class="badge images">Image</span></a>
+      <div class="info"><div class="name">test-card.png</div><div class="sub"><span>27.8 KB</span><span>1200×800</span></div>
+      <a class="dl" href="files/test-card.png" download="test-card.png">Download</a></div>
+    </div>
+    <div class="file" data-type="images" data-name="rule-110.jpg" data-size="689320" data-url="files/rule-110.jpg" data-thumb="thumbs/rule-110.jpg">
+      <a class="thumb" href="files/rule-110.jpg"><img src="thumbs/rule-110.jpg" alt="" loading="lazy"><span class="badge images">Image</span></a>
+      <div class="info"><div class="name">rule-110.jpg</div><div class="sub"><span>673.2 KB</span><span>1200×800</span></div>
+      <a class="dl" href="files/rule-110.jpg" download="rule-110.jpg">Download</a></div>
+    </div>
+    <div class="file" data-type="images" data-name="gradient-portrait.jpg" data-size="22288" data-url="files/gradient-portrait.jpg" data-thumb="thumbs/gradient-portrait.jpg">
+      <a class="thumb" href="files/gradient-portrait.jpg"><img src="thumbs/gradient-portrait.jpg" alt="" loading="lazy"><span class="badge images">Image</span></a>
+      <div class="info"><div class="name">gradient-portrait.jpg</div><div class="sub"><span>21.8 KB</span><span>800×1200</span></div>
+      <a class="dl" href="files/gradient-portrait.jpg" download="gradient-portrait.jpg">Download</a></div>
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById("run").addEventListener("click", function () {
+  var s = document.createElement("script");
+  s.src = "../downloader.js?v=" + Date.now();
+  document.body.appendChild(s);
+});
+</script>
+</body></html>
