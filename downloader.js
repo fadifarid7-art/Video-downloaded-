@@ -226,6 +226,7 @@
     ".tag.videos{background:var(--vid)}.tag.images{background:var(--img)}.tag.streams,.tag.other{background:var(--muted)}" +
     ".dl{background:var(--accent);color:#0b1220;text-decoration:none;font-weight:600;font-size:14px;padding:8px 12px;border-radius:8px;flex:none}" +
     ".dl.off{background:var(--line);color:var(--muted)}" +
+    ".dl.ready{background:var(--ok)}" +
     ".empty{color:var(--muted);padding:6px 2px 10px;font-size:14px}" +
     "</style>" +
     '<div class="sheet" role="dialog" aria-label="Downloader">' +
@@ -359,7 +360,54 @@
   // Save the actual file: load it in the background, then hand it over marked
   // "save, don't play" so iPhone browsers download it instead of opening a player.
   // If the site blocks background loading, fall back to opening the link normally.
+  var MIME = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska",
+    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", heic: "image/heic", avif: "image/avif" };
+  function canShareFiles() {
+    try {
+      return !!(navigator.share && navigator.canShare &&
+        navigator.canShare({ files: [new File(["x"], "t.jpg", { type: "image/jpeg" })] }));
+    } catch (e) { return false; }
+  }
+  var USE_SHARE = canShareFiles();
+
+  // iPhone route: load the file, turn the button into "Save", and open the
+  // share sheet on that second tap (iOS only opens it straight from a tap).
+  // The share sheet offers Save to Files (pick any folder) and Save Video/Image.
+  function shareFlow(i, a) {
+    if (a._file) {
+      var f = a._file;
+      navigator.share({ files: [f] }).then(function () {
+        status("Saved " + i.name + ".", "ok");
+      }).catch(function (e) {
+        if (e && e.name === "AbortError") status("Cancelled. Tap Save to try again.");
+        else status("The share sheet didn't open (" + (e && e.message || "unknown") + "). Long-press Download instead.", "err");
+      });
+      return;
+    }
+    if (a.getAttribute("aria-busy") === "true") return;
+    a.setAttribute("aria-busy", "true");
+    a.textContent = "Loading…";
+    status("Loading " + i.name + "…");
+    fetch(i.url, { credentials: "same-origin" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+      .then(function (b) {
+        var type = MIME[extOf(i.name)] || b.type || "application/octet-stream";
+        var f = new File([b], i.name, { type: type });
+        if (!navigator.canShare({ files: [f] })) throw new Error("not shareable");
+        a._file = f;
+        a.textContent = "Save";
+        a.classList.add("ready");
+        status(i.name + " is ready (" + fmtSize(b.size) + "). Tap Save, then choose Save to Files or Save Video.", "ok");
+      })
+      .catch(function () {
+        a.textContent = "Download";
+        status("Couldn't load " + i.name + " here. Long-press Download and choose the download option.", "warn");
+      })
+      .then(function () { a.removeAttribute("aria-busy"); });
+  }
+
   function saveDirect(i, a) {
+    if (USE_SHARE) return shareFlow(i, a);
     if (a.getAttribute("aria-busy") === "true") return;
     a.setAttribute("aria-busy", "true");
     var label = a.textContent;
@@ -398,7 +446,7 @@
       items = found;
       render();
       if (adapter === folderHost) status("Tap Open to go to a file's page and use its download button, or grab the whole folder as a ZIP.");
-      else if (items.length) status("Tap Download. Your browser asks where to save.");
+      else if (items.length) status(USE_SHARE ? "Tap Download, then Save. Choose Save to Files to pick a folder." : "Tap Download. Your browser asks where to save.");
     }).catch(function (e) { status("Scan failed: " + e.message, "err"); });
   }
 
