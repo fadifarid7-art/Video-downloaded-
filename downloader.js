@@ -302,6 +302,7 @@
         a.textContent = "Open"; a.href = i.url; // file page; tap its download button there
       } else {
         a.textContent = "Download"; a.href = i.url; a.setAttribute("download", i.name);
+        a.addEventListener("click", function (e) { e.preventDefault(); saveDirect(i, a); });
       }
       row.appendChild(th); row.appendChild(meta); row.appendChild(a);
       list.appendChild(row);
@@ -353,6 +354,32 @@
       else { fallbackCopy(text); done(); }
     });
     btn("Rescan", true, function () { scan(); });
+  }
+
+  // Save the actual file: load it in the background, then hand it over marked
+  // "save, don't play" so iPhone browsers download it instead of opening a player.
+  // If the site blocks background loading, fall back to opening the link normally.
+  function saveDirect(i, a) {
+    if (a.getAttribute("aria-busy") === "true") return;
+    a.setAttribute("aria-busy", "true");
+    var label = a.textContent;
+    a.textContent = "Loading…";
+    status("Loading " + i.name + "…");
+    fetch(i.url, { credentials: "same-origin" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+      .then(function (b) {
+        var url = URL.createObjectURL(new Blob([b], { type: "application/octet-stream" }));
+        var link = document.createElement("a");
+        link.href = url; link.download = i.name;
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+        status("Sent " + i.name + " (" + fmtSize(b.size) + ") to your browser's downloads.", "ok");
+      })
+      .catch(function () {
+        status("This site blocks background loading, so the file opened directly. If it plays instead of saving, long-press Download and choose the download option.", "warn");
+        location.href = i.url;
+      })
+      .then(function () { a.textContent = label; a.removeAttribute("aria-busy"); });
   }
 
   function fallbackCopy(text) {
