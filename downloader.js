@@ -6,9 +6,9 @@
  * own download manager handles it (Aloha / Safari on iPhone show their
  * save-location prompt; desktop browsers save to Downloads).
  *
- * Site adapters:
- *   - filester.me folder pages (/f/<id>): reads the folder listing, can load
- *     every page of a paginated folder, and offers the site's own ZIP download.
+ * Page adapters:
+ *   - File-host folder pages: reads the folder listing, can load every page
+ *     of a paginated folder, and offers the folder ZIP download.
  *   - Generic: <video>/<source>, links to media files, large <img>, elements
  *     with data-url/data-src, and media URLs the page has already loaded.
  *
@@ -55,10 +55,13 @@
   }
 
   // ---------- adapters ----------
-  var filester = {
-    name: "filester",
+  var folderHost = {
+    name: "folder",
     match: function () {
-      return /(^|\.)filester\.me$/.test(location.hostname) && /^\/f\//.test(location.pathname);
+      // Recognised by page layout: a folder grid whose items open /d/<id> file pages.
+      if (!/^\/f\//.test(location.pathname)) return false;
+      var first = document.querySelector("#filesGrid .file-item[onclick]");
+      return !!(first && /\/d\//.test(first.getAttribute("onclick") || ""));
     },
     folderId: function () {
       if (typeof window.folderIdentifier === "string" && window.folderIdentifier) return window.folderIdentifier;
@@ -81,7 +84,7 @@
           size: el.getAttribute("data-size") || "",
           url: location.origin + "/d/" + m[1],
           thumb: img ? abs(img.getAttribute("src")) : "",
-          via: "page", // file page on filester; its own download button finishes the job
+          via: "page", // the file's own page; its download button finishes the job
         });
       });
       return out;
@@ -185,7 +188,7 @@
     },
   };
 
-  var adapter = filester.match() ? filester : generic;
+  var adapter = folderHost.match() ? folderHost : generic;
 
   // ---------- UI (shadow DOM keeps the site's CSS out) ----------
   var host = document.createElement("div");
@@ -296,7 +299,7 @@
         a.className = "dl off"; a.textContent = "Stream"; a.href = i.url; a.target = "_blank"; a.rel = "noopener";
         a.title = "Streaming playlist: needs a converter, not a plain download";
       } else if (i.via === "page") {
-        a.textContent = "Open"; a.href = i.url; // filester file page; tap its download button there
+        a.textContent = "Open"; a.href = i.url; // file page; tap its download button there
       } else {
         a.textContent = "Download"; a.href = i.url; a.setAttribute("download", i.name);
       }
@@ -316,9 +319,9 @@
       tools.appendChild(b);
       return b;
     }
-    if (adapter === filester) {
+    if (adapter === folderHost) {
       btn("Download folder as ZIP", false, function (b) {
-        b.disabled = true; status("Asking filester for the ZIP link…");
+        b.disabled = true; status("Getting the ZIP link…");
         adapter.zip().then(function (url) {
           status("ZIP ready. Your browser will ask where to save it.", "ok");
           location.href = url;
@@ -367,7 +370,7 @@
     adapter.scan().then(function (found) {
       items = found;
       render();
-      if (adapter === filester) status("Tap Open to go to a file's page and use its download button, or grab the whole folder as a ZIP.");
+      if (adapter === folderHost) status("Tap Open to go to a file's page and use its download button, or grab the whole folder as a ZIP.");
       else if (items.length) status("Tap Download. Your browser asks where to save.");
     }).catch(function (e) { status("Scan failed: " + e.message, "err"); });
   }
