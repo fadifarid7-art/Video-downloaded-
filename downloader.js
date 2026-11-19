@@ -213,6 +213,7 @@
     ".act.ghost{background:var(--card);color:var(--fg);border:1px solid var(--line);font-weight:500}" +
     ".act:disabled{opacity:.5}" +
     ".tools{display:flex;gap:8px;flex-wrap:wrap;padding:0 14px 10px}" +
+    ".head,.bar,.tools,.status{flex:none}" +
     ".status{padding:0 14px 8px;font-size:13px;color:var(--muted);min-height:1em}" +
     ".status.warn{color:var(--warn)}.status.err{color:var(--err)}.status.ok{color:var(--ok)}" +
     ".list{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 14px 14px;display:flex;flex-direction:column;gap:8px}" +
@@ -227,6 +228,9 @@
     ".dl{background:var(--accent);color:#0b1220;text-decoration:none;font-weight:600;font-size:14px;padding:8px 12px;border-radius:8px;flex:none}" +
     ".dl.off{background:var(--line);color:var(--muted)}" +
     ".dl.ready{background:var(--ok)}" +
+    ".row.pick{cursor:pointer}.row.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}" +
+    ".th{position:relative}.ck{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.35);color:#0b1220;font-size:12px;font-weight:700;display:grid;place-items:center}" +
+    ".row.sel .ck{background:var(--accent);border-color:var(--accent)}" +
     ".empty{color:var(--muted);padding:6px 2px 10px;font-size:14px}" +
     "</style>" +
     '<div class="sheet" role="dialog" aria-label="Downloader">' +
@@ -243,6 +247,9 @@
 
   var items = [];
   var filter = "all";
+  var selected = {};   // id -> true
+  var fileCache = {};  // id -> File, loaded and ready to hand over
+  var batchBusy = false;
 
   function status(text, kind) { var s = $("st"); s.textContent = text || ""; s.className = "status" + (kind ? " " + kind : ""); }
 
@@ -305,6 +312,14 @@
         a.textContent = "Download"; a.href = i.url; a.setAttribute("download", i.name);
         a.addEventListener("click", function (e) { e.preventDefault(); saveDirect(i, a); });
       }
+      if (i.via === "direct" && i.type !== "streams") {
+        var ck = document.createElement("span"); ck.className = "ck"; ck.textContent = selected[i.id] ? "✓" : "";
+        th.appendChild(ck);
+        row.classList.add("pick");
+        if (selected[i.id]) row.classList.add("sel");
+        var toggle = function () { if (batchBusy) return; if (selected[i.id]) delete selected[i.id]; else selected[i.id] = true; render(); };
+        th.addEventListener("click", toggle); meta.addEventListener("click", toggle);
+      }
       row.appendChild(th); row.appendChild(meta); row.appendChild(a);
       list.appendChild(row);
     });
@@ -346,6 +361,21 @@
       a.className = "act"; a.textContent = "Download all as ZIP"; a.href = generic.zipUrl(); a.setAttribute("download", "");
       tools.appendChild(a);
     }
+    var pickable = items.filter(function (i) { return i.via === "direct" && i.type !== "streams" && (filter === "all" || i.type === filter); });
+    if (pickable.length) {
+      var sel = selectedItems();
+      var ready = sel.length && sel.every(function (i) { return fileCache[i.id]; });
+      var label = !sel.length ? "Save selected" : ready ? "Save " + sel.length + " file" + (sel.length > 1 ? "s" : "") + " now" : "Save selected (" + sel.length + ")";
+      var sb = btn(label, false, function (b) { saveSelected(b); });
+      sb.disabled = !sel.length || batchBusy;
+      if (ready) sb.style.background = "var(--ok)";
+      var allOn = pickable.every(function (i) { return selected[i.id]; });
+      btn(allOn ? "Clear selection" : "Select all " + pickable.length, true, function () {
+        if (batchBusy) return;
+        pickable.forEach(function (i) { if (allOn) delete selected[i.id]; else selected[i.id] = true; });
+        render();
+      });
+    }
     btn("Copy links", true, function (b) {
       var shown = items.filter(function (i) { return filter === "all" || i.type === filter; }).map(function (i) { return i.url; });
       if (!shown.length) return;
@@ -380,7 +410,7 @@
         status("Saved " + i.name + ".", "ok");
       }).catch(function (e) {
         if (e && e.name === "AbortError") status("Cancelled. Tap Save to try again.");
-        else status("The share sheet didn't open (" + (e && e.message || "unknown") + "). Long-press Download instead.", "err");
+        else status("The share sheet didn't open (" + (e && e.message || "unknown") + "). Try again.", "err");
       });
       return;
     }
@@ -394,16 +424,79 @@
         var type = MIME[extOf(i.name)] || b.type || "application/octet-stream";
         var f = new File([b], i.name, { type: type });
         if (!navigator.canShare({ files: [f] })) throw new Error("not shareable");
-        a._file = f;
+        a._file = f; fileCache[i.id] = f;
         a.textContent = "Save";
         a.classList.add("ready");
         status(i.name + " is ready (" + fmtSize(b.size) + "). Tap Save, then choose Save to Files or Save Video.", "ok");
       })
       .catch(function () {
         a.textContent = "Download";
-        status("Couldn't load " + i.name + " here. Long-press Download and choose the download option.", "warn");
+        status("Couldn't load " + i.name + " here. The site may block background loading.", "warn");
       })
       .then(function () { a.removeAttribute("aria-busy"); });
+  }
+
+  function selectedItems() { return items.filter(function (i) { return selected[i.id]; }); }
+
+  function loadFile(i) {
+    if (fileCache[i.id]) return Promise.resolve(fileCache[i.id]);
+    return fetch(i.url, { credentials: "same-origin" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+      .then(function (b) {
+        var f = new File([b], i.name, { type: MIME[extOf(i.name)] || b.type || "application/octet-stream" });
+        fileCache[i.id] = f;
+        return f;
+      });
+  }
+
+  // Several files, one share sheet: first tap loads them, second tap hands them all over.
+  function saveSelected(b) {
+    var sel = selectedItems();
+    if (!sel.length || batchBusy) return;
+    var ready = sel.every(function (i) { return fileCache[i.id]; });
+    if (ready && USE_SHARE) {
+      var files = sel.map(function (i) { return fileCache[i.id]; });
+      if (!navigator.canShare({ files: files })) { status("Your phone won't take these files together. Select fewer and try again.", "err"); return; }
+      navigator.share({ files: files }).then(function () {
+        status("Saved " + files.length + " file" + (files.length > 1 ? "s" : "") + ".", "ok");
+        selected = {}; render();
+      }).catch(function (e) {
+        if (e && e.name === "AbortError") status("Cancelled. Tap the green button to try again.");
+        else status("The share sheet didn't open (" + (e && e.message || "unknown") + "). Select fewer files and try again.", "err");
+      });
+      return;
+    }
+    batchBusy = true; render();
+    var done = 0, total = sel.length, bytes = 0, failed = [];
+    var chain = Promise.resolve();
+    sel.forEach(function (i) {
+      chain = chain.then(function () {
+        status("Loading " + (done + 1) + " of " + total + ": " + i.name + "…");
+        return loadFile(i).then(function (f) { bytes += f.size; }, function () { failed.push(i.name); delete selected[i.id]; })
+          .then(function () { done++; });
+      });
+    });
+    chain.then(function () {
+      batchBusy = false;
+      var ok = total - failed.length;
+      if (!USE_SHARE) {
+        selectedItems().forEach(function (i, n) {
+          setTimeout(function () {
+            var url = URL.createObjectURL(fileCache[i.id]);
+            var link = document.createElement("a"); link.href = url; link.download = i.name;
+            document.body.appendChild(link); link.click(); link.remove();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+          }, n * 400);
+        });
+        status("Sent " + ok + " file" + (ok === 1 ? "" : "s") + " (" + fmtSize(bytes) + ") to your downloads." + (failed.length ? " Couldn't load: " + failed.join(", ") : ""), failed.length ? "warn" : "ok");
+        selected = {}; render();
+        return;
+      }
+      render();
+      var warn = bytes > 500 * 1048576 ? " That's a lot for a phone; if saving fails, save fewer at a time." : "";
+      status((ok ? ok + " file" + (ok === 1 ? "" : "s") + " ready (" + fmtSize(bytes) + "). Tap the green button, then Save to Files." : "Nothing could be loaded.") +
+        (failed.length ? " Couldn't load: " + failed.join(", ") + "." : "") + warn, ok ? (failed.length || warn ? "warn" : "ok") : "err");
+    });
   }
 
   function saveDirect(i, a) {
