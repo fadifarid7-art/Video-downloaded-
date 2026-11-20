@@ -66,7 +66,7 @@ export default {
       }
       return json({ error: "Not found" }, 404);
     } catch (e) {
-      return json({ error: e && e.message ? e.message : String(e), code: (e && e.code) || undefined }, (e && e.status) || 502);
+      return json({ error: e && e.message ? e.message : String(e), code: (e && e.code) || undefined, open: (e && e.open) || undefined, site: (e && e.site) || undefined }, (e && e.status) || 502);
     }
   },
 };
@@ -239,6 +239,8 @@ function metaRefresh(html, base) {
 async function scanInner(start, all, password) {
   let target = start, page, hops = 0;
   for (;;) {
+    const ext = externalOnly(target);
+    if (ext) { const e = new Error(ext.message); e.status = 422; e.code = "external"; e.open = target.href; e.site = ext.site; throw e; }
     const koofr = await koofrLink(target);
     if (koofr) return withVia(await scanKoofr(koofr, password || ""), start, target);
     const pd = pixeldrainLink(target);
@@ -314,6 +316,16 @@ async function followFilePageLinks(html, base, items) {
   items.length = 0;
   for (const i of head.concat(tail)) { delete i._at; items.push(i); }
   return links.length;
+}
+
+// ---------------------------------------------------------------- Sites used on their own page
+// Hosts that lock their file list against outside tools. The downloader doesn't
+// work around that; it points the person to the site's own page instead.
+function externalOnly(u) {
+  if (/(^|\.)gofile\.io$/.test(u.hostname)) {
+    return { site: "gofile", message: "gofile only allows downloads from its own page. Open it on gofile, play a video, then use Aloha's own download button (gofile's download button saves a web page in Aloha)." };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- Pixeldrain
