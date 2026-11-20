@@ -43,6 +43,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .btn.grow{flex:1}
 .btn:disabled{opacity:.5;cursor:default}
+.pw{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:12px;font-size:16px}
 .opt{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
 .opt input{width:18px;height:18px;accent-color:var(--accent)}
 .status{margin:12px 2px 0;font-size:14px;color:var(--muted);min-height:1.2em}
@@ -132,6 +133,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       <button type="button" class="btn" id="paste">Paste</button>
       <button type="submit" class="btn primary grow" id="scan">Find files</button>
     </div>
+    <input type="password" id="pw" class="pw" placeholder="Link password" autocomplete="off" aria-label="Link password" hidden>
     <label class="opt"><input type="checkbox" id="all" checked> Include every page of a folder</label>
   </form>
 
@@ -267,10 +269,14 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       if (n >= links.length) return Promise.resolve();
       var u = links[n++];
       status(links.length > 1 ? "Reading link " + n + " of " + links.length + "…" : "Reading the page…");
-      return fetch("/api/scan?url=" + encodeURIComponent(u) + ($("all").checked ? "&all=1" : ""), { credentials: "same-origin" })
+      var pw = $("pw").value;
+      return fetch("/api/scan?url=" + encodeURIComponent(u) + ($("all").checked ? "&all=1" : "") + (pw ? "&password=" + encodeURIComponent(pw) : ""), { credentials: "same-origin" })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }, function () { return { ok: false, d: { error: "Unexpected answer (HTTP " + r.status + ")." } }; }); })
         .then(function (res) {
-          if (!res.ok) { failed.push(res.d.error || "error"); return; }
+          if (!res.ok) {
+            if (res.d.code === "password") { $("pw").hidden = false; $("pw").focus(); }
+            failed.push(res.d.error || "error"); return;
+          }
           if (!title) title = res.d.title || u;
           (res.d.items || []).forEach(function (it) { if (!found.some(function (f) { return f.source && f.source === it.source; })) found.push(it); });
         }, function () { failed.push("couldn't reach the helper"); })

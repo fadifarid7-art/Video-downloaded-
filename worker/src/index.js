@@ -59,13 +59,13 @@ export default {
     try {
       if (url.pathname === "/api/whoami") return json({ email: who.email || null });
       if (url.pathname === "/api/scan") {
-        const result = await scan(url.searchParams.get("url"), url.searchParams.get("all") === "1");
+        const result = await scan(url.searchParams.get("url"), url.searchParams.get("all") === "1", url.searchParams.get("password"));
         await signItems(result.items, env);
         return json(result);
       }
       return json({ error: "Not found" }, 404);
     } catch (e) {
-      return json({ error: e && e.message ? e.message : String(e) }, (e && e.status) || 502);
+      return json({ error: e && e.message ? e.message : String(e), code: (e && e.code) || undefined }, (e && e.status) || 502);
     }
   },
 };
@@ -216,8 +216,10 @@ async function verifyLink(pathname, env) {
 
 // ---------------------------------------------------------------- scanning
 
-async function scan(raw, all) {
+async function scan(raw, all, password) {
   const target = requireHttpUrl(raw);
+  const koofr = await koofrLink(target);
+  if (koofr) return await scanKoofr(koofr, password || "");
   const page = await fetchPage(target);
   const base = page.finalUrl;
 
@@ -272,6 +274,88 @@ async function followFilePageLinks(html, base, items) {
   items.length = 0;
   for (const i of head.concat(tail)) { delete i._at; items.push(i); }
   return links.length;
+}
+
+// ---------------------------------------------------------------- Koofr shared links
+// Public links (app.koofr.net/links/<id>, short k00.fr/<code>) are meant for anyone
+// to download. The app reads the link and its file list from /api/v2/public/links
+// and downloads from /content/links/<id>/files/get, adding &password= when the owner
+// set one and &force to download rather than preview.
+
+const KOOFR = "https://app.koofr.net";
+
+async function koofrLink(u) {
+  let url = u;
+  if (/(^|\.)k00\.fr$/.test(url.hostname)) {
+    const r = await get(url.href, { redirect: "manual", headers: { "user-agent": UA } }, "the short link");
+    const loc = r.headers.get("location");
+    if (!loc) return null;
+    url = new URL(loc, url);
+  }
+  if (!/(^|\.)koofr\.net$/.test(url.hostname)) return null;
+  const m = url.pathname.match(/\/links\/([A-Za-z0-9-]{6,64})/);
+  if (!m) return null;
+  return { id: m[1], path: url.searchParams.get("path") || "/" };
+}
+
+function joinPath(dir, name) { return (dir.endsWith("/") ? dir : dir + "/") + name; }
+
+async function koofrJson(path, password, what) {
+  const q = password ? (path.includes("?") ? "&" : "?") + "password=" + encodeURIComponent(password) : "";
+  const r = await get(KOOFR + path + q, { headers: { "user-agent": UA, accept: "application/json" } }, "Koofr");
+  if (r.status === 401 || r.status === 403) {
+    const e = new Error(password ? "That password isn't right." : "This Koofr link has a password. Enter it and search again.");
+    e.status = 401; e.code = "password"; throw e;
+  }
+  if (r.status === 404) { const e = new Error("Koofr says this link doesn't exist or has expired."); e.status = 404; throw e; }
+  if (!r.ok) throw new Error("Koofr answered with HTTP " + r.status + " for " + what + ".");
+  return r.json();
+}
+
+// The file list can come as {files:[…]}, {file:{children:[…]}} or a bare array.
+function koofrEntries(j) {
+  const list = Array.isArray(j) ? j : j.files || (j.file && (j.file.children || j.file.files)) || j.children || j.items || [];
+  return list.map((f) => ({
+    name: f.name || "",
+    dir: f.type === "dir" || f.type === "folder" || f.isDir === true || f.dir === true,
+    size: f.size || f.contentLength || "",
+    mime: f.contentType || f.mimeType || "",
+  })).filter((f) => f.name);
+}
+
+async function scanKoofr(link, password) {
+  let title = "Koofr shared link";
+  try {
+    const info = await koofrJson("/api/v2/public/links/" + link.id, password, "the link");
+    title = info.name || (info.link && info.link.name) || (info.file && info.file.name) || title;
+  } catch (e) { if (e.code === "password" || e.status === 404) throw e; }
+  const items = [];
+  const pw = password ? "&password=" + encodeURIComponent(password) : "";
+  let requests = 1;
+  const walk = async (path, depth) => {
+    if (items.length >= MAX_ITEMS || requests >= 40) return;
+    requests++;
+    const j = await koofrJson("/api/v2/public/links/" + link.id + "/bundle?path=" + encodeURIComponent(path), password, "the file list");
+    const entries = koofrEntries(j);
+    if (!entries.length && depth === 0 && !(Array.isArray(j) || j.files || j.file)) {
+      throw new Error("Koofr's file list came back in an unexpected layout (keys: " + Object.keys(j).slice(0, 8).join(", ") + "). Send this message to Claude.");
+    }
+    for (const f of entries) {
+      const p = joinPath(path, f.name);
+      if (f.dir) { if (depth < 3) await walk(p, depth + 1); continue; }
+      const type = kindOf(f.name) || (/^video\//.test(f.mime) ? "videos" : /^image\//.test(f.mime) ? "images" : "other");
+      const fileUrl = KOOFR + "/content/links/" + link.id + "/files/get/" + encodeURIComponent(f.name) + "?path=" + encodeURIComponent(p) + "&force" + pw;
+      items.push({
+        name: f.name, type, size: f.size ? String(f.size) : "", thumb: "",
+        dl: fileLink({ url: fileUrl, name: f.name, ref: KOOFR + "/links/" + link.id }),
+        source: KOOFR + "/links/" + link.id + "?path=" + encodeURIComponent(p),
+        folder: path === "/" ? "" : path,
+      });
+      if (items.length >= MAX_ITEMS) return;
+    }
+  };
+  await walk(link.path, 0);
+  return { kind: "folder", title, items };
 }
 
 // Folder listing whose items open /d/<id> file pages.
