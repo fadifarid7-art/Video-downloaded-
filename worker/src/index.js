@@ -356,7 +356,7 @@ function pdItem(f) {
   return {
     name, type,
     size: f.size ? String(f.size) : "",
-    thumb: type === "images" ? PD + "/api/file/" + f.id + "/thumbnail" : "",
+    thumb: type === "images" || type === "videos" ? PD + "/api/file/" + f.id + "/thumbnail" : "",
     dl: fileLink({ url: PD + "/api/file/" + f.id + "?download", name, ref: PD + "/u/" + f.id }),
     source: PD + "/u/" + f.id,
     blocked: f.can_download === false,
@@ -656,7 +656,8 @@ async function file(params, request, inline) {
   const headers = new Headers({
     "content-type": up.headers.get("content-type") || "application/octet-stream",
     "content-disposition": contentDisposition(name, inline),
-    "cache-control": "private, max-age=3600",
+    // The phone keeps each file for as long as its signed link is valid (6 hours).
+    "cache-control": "private, max-age=21600, immutable",
     "x-content-type-options": "nosniff",
   });
   for (const h of ["content-length", "content-range", "accept-ranges", "last-modified", "etag"]) {

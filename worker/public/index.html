@@ -511,12 +511,12 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       var im = document.createElement("img"); im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; im.src = i.thumb;
       im.onerror = function () { im.remove(); glyph(th, i); };
       th.appendChild(im);
-    } else if (i.type === "images" && i.dl) {
-      var pim = document.createElement("img"); pim.alt = ""; pim.loading = "lazy"; pim.decoding = "async"; pim.src = viewUrl(i);
-      pim.onerror = function () { pim.remove(); glyph(th, i); };
-      th.appendChild(pim);
-    } else if (i.type === "videos" && i.dl) {
-      th.dataset.preview = viewUrl(i);   // filled in with the first frame when it scrolls into view
+    } else if (previewCache[i.dl]) {
+      th.appendChild(previewCache[i.dl]);           // already loaded: reuse, no reload
+    } else if ((i.type === "images" || i.type === "videos") && i.dl) {
+      th.dataset.load = i.type === "images" ? "img" : "video";
+      th.dataset.src = viewUrl(i);
+      th.dataset.key = i.dl;
       glyph(th, i);
     } else glyph(th, i);
     if (i.type === "videos") { var pb = document.createElement("span"); pb.className = "playbadge"; pb.textContent = "▶"; th.appendChild(pb); }
@@ -549,21 +549,53 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     if (g.textContent) th.insertBefore(g, th.firstChild);
   }
 
-  // First-frame previews for videos without a thumbnail, loaded only when visible.
-  var thumbObserver = "IntersectionObserver" in window ? new IntersectionObserver(function (entries) {
+  // Previews that come through the helper (full pictures, video first frames)
+  // load only when on screen, a few at a time so the visible ones appear first,
+  // and are kept once loaded so re-drawing the list never reloads them.
+  var previewCache = {};                       // download link -> loaded <img>/<video>
+  var LIMIT = { img: 4, video: 2 }, active = { img: 0, video: 0 }, previewQueue = [];
+  var loadObserver = "IntersectionObserver" in window ? new IntersectionObserver(function (entries) {
     entries.forEach(function (en) {
-      if (!en.isIntersecting) return;
-      var th = en.target; thumbObserver.unobserve(th);
-      var v = document.createElement("video");
-      v.muted = true; v.playsInline = true; v.preload = "metadata"; v.src = th.dataset.preview + "#t=0.5";
-      v.addEventListener("loadeddata", function () { var g = th.querySelector(".glyph"); if (g) g.remove(); });
-      v.addEventListener("error", function () { v.remove(); });
-      th.insertBefore(v, th.firstChild);
+      var th = en.target; th._visible = en.isIntersecting;
+      if (en.isIntersecting && !th._queued) { th._queued = true; previewQueue.push(th); }
     });
-  }, { rootMargin: "200px" }) : null;
+    pump();
+  }, { rootMargin: "150px" }) : null;
+  function pump() {
+    for (var k = 0; k < previewQueue.length;) {
+      var th = previewQueue[k], kind = th.dataset.load;
+      if (!th.isConnected) { previewQueue.splice(k, 1); continue; }
+      if (!th._visible || active[kind] >= LIMIT[kind]) { k++; continue; }
+      previewQueue.splice(k, 1); startPreview(th);
+    }
+  }
+  function startPreview(th) {
+    var kind = th.dataset.load, key = th.dataset.key, finished = false;
+    active[kind]++;
+    function done(el) {
+      if (finished) return; finished = true; active[kind]--;
+      if (el) { previewCache[key] = el; var g = th.querySelector(".glyph"); if (g) g.remove(); }
+      pump();
+    }
+    var el;
+    if (kind === "img") {
+      el = document.createElement("img"); el.alt = ""; el.decoding = "async";
+      el.onload = function () { done(el); }; el.onerror = function () { el.remove(); done(null); };
+    } else {
+      el = document.createElement("video"); el.muted = true; el.playsInline = true; el.preload = "metadata";
+      el.addEventListener("loadeddata", function () { done(el); });
+      el.addEventListener("error", function () { el.remove(); done(null); });
+    }
+    setTimeout(function () { done(null); }, 20000);   // never let a slow one block the queue
+    el.src = th.dataset.src + (kind === "video" ? "#t=0.5" : "");
+    th.insertBefore(el, th.firstChild);
+  }
   function observeThumbs() {
-    if (!thumbObserver) return;
-    document.querySelectorAll(".thumb[data-preview]").forEach(function (th) { if (!th.querySelector("video")) thumbObserver.observe(th); });
+    if (!loadObserver) {   // very old browsers: just load them
+      document.querySelectorAll(".thumb[data-load]").forEach(function (th) { th._visible = true; previewQueue.push(th); });
+      return pump();
+    }
+    document.querySelectorAll(".thumb[data-load]").forEach(function (th) { loadObserver.observe(th); });
   }
 
   // ---------- download all ----------
@@ -700,10 +732,29 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     var i = viewList[viewPos], m = $("vmedia");
     m.textContent = "";
     if (i.type === "videos") {
-      var v = document.createElement("video"); v.controls = true; v.playsInline = true; v.autoplay = true; v.preload = "metadata"; v.src = viewUrl(i);
+      var v = document.createElement("video"); v.controls = true; v.playsInline = true; v.autoplay = true; v.preload = "metadata";
+      if (i.thumb) v.poster = i.thumb;
+      v.src = viewUrl(i);
       v.onerror = function () { m.textContent = ""; var d = document.createElement("div"); d.className = "vmsg"; d.textContent = "This video won't play here. Download it to watch it."; m.appendChild(d); };
       m.appendChild(v);
-    } else { var img = document.createElement("img"); img.alt = i.name; img.src = viewUrl(i); m.appendChild(img); }
+    } else {
+      // Show what we already have straight away, then swap in the full picture.
+      var img = document.createElement("img"); img.alt = i.name;
+      var have = previewCache[i.dl] && previewCache[i.dl].tagName === "IMG" ? previewCache[i.dl].src : i.thumb;
+      var full = viewUrl(i);
+      if (have && have !== full) {
+        img.src = have; img.style.filter = "blur(6px)";
+        var hi = new Image(); hi.decoding = "async";
+        hi.onload = function () { if (viewList[viewPos] === i) { img.src = full; img.style.filter = ""; } };
+        hi.src = full;
+      } else img.src = full;
+      m.appendChild(img);
+    }
+    // Load the next and previous pictures in the background so moving between them is quick.
+    [viewPos + 1, viewPos - 1].forEach(function (k) {
+      var n = viewList[k];
+      if (n && n.type === "images" && !previewCache[n.dl]) { var pre = new Image(); pre.decoding = "async"; pre.src = viewUrl(n); }
+    });
     $("vname").textContent = (viewPos + 1) + " / " + viewList.length + " · " + i.name + (i.size ? " · " + fmt(i.size) : "");
     $("vdl").href = i.dl; $("vdl").setAttribute("download", i.name);
     $("vprev").disabled = viewPos === 0; $("vnext").disabled = viewPos >= viewList.length - 1;
