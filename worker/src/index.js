@@ -61,6 +61,7 @@ export default {
       if (url.pathname === "/api/scan") {
         const result = await scan(url.searchParams.get("url"), url.searchParams.get("all") === "1", url.searchParams.get("password"));
         await signItems(result.items, env);
+        result.items.forEach((i) => { delete i.blocked; });
         return json(result);
       }
       return json({ error: "Not found" }, 404);
@@ -240,6 +241,8 @@ async function scanInner(start, all, password) {
   for (;;) {
     const koofr = await koofrLink(target);
     if (koofr) return withVia(await scanKoofr(koofr, password || ""), start, target);
+    const pd = pixeldrainLink(target);
+    if (pd) return withVia(await scanPixeldrain(pd), start, target);
     page = await fetchPage(target);
     if (page.finalUrl.href !== target.href) {
       const k2 = await koofrLink(page.finalUrl);
@@ -311,6 +314,58 @@ async function followFilePageLinks(html, base, items) {
   items.length = 0;
   for (const i of head.concat(tail)) { delete i._at; items.push(i); }
   return links.length;
+}
+
+// ---------------------------------------------------------------- Pixeldrain
+// Public read API: /api/file/<id>/info and /api/list/<id> list files; downloads
+// use /api/file/<id>?download. Heavily-downloaded files get a rate-limit captcha,
+// which is surfaced to the user (pixeldrain's own page), never worked around.
+
+const PD = "https://pixeldrain.com";
+
+function pixeldrainLink(u) {
+  if (!/(^|\.)pixeldrain\.com$/.test(u.hostname) && !/(^|\.)pd\.cybar\.xyz$/.test(u.hostname)) return null;
+  var m = u.pathname.match(/^\/(u|l|api\/file|api\/list)\/([A-Za-z0-9_-]{4,40})/);
+  if (!m) return null;
+  var kind = m[1] === "l" || m[1] === "api/list" ? "list" : "file";
+  return { kind: kind, id: m[2] };
+}
+
+async function pdJson(path) {
+  const r = await get(PD + path, { headers: { "user-agent": UA, accept: "application/json" } }, "Pixeldrain");
+  if (r.status === 404) { const e = new Error("Pixeldrain says this link doesn't exist or has been removed."); e.status = 404; throw e; }
+  if (!r.ok) throw new Error("Pixeldrain answered with HTTP " + r.status + ".");
+  return r.json();
+}
+
+function pdItem(f) {
+  const name = f.name || f.id;
+  const type = kindOf(name) || (/^video\//.test(f.mime_type || "") ? "videos" : /^image\//.test(f.mime_type || "") ? "images" : "other");
+  return {
+    name, type,
+    size: f.size ? String(f.size) : "",
+    thumb: type === "images" ? PD + "/api/file/" + f.id + "/thumbnail" : "",
+    dl: fileLink({ url: PD + "/api/file/" + f.id + "?download", name, ref: PD + "/u/" + f.id }),
+    source: PD + "/u/" + f.id,
+    blocked: f.can_download === false,
+  };
+}
+
+async function scanPixeldrain(link) {
+  if (link.kind === "list") {
+    const j = await pdJson("/api/list/" + link.id);
+    const files = (j.files || []).filter((f) => f && f.id);
+    const items = files.map(pdItem);
+    const blocked = items.filter((i) => i.blocked).length;
+    const out = { kind: "folder", title: j.title || "Pixeldrain album", items };
+    if (blocked) out.notice = blocked + " of these files can't be downloaded without a captcha; open them on pixeldrain.com.";
+    return out;
+  }
+  const f = await pdJson("/api/file/" + link.id + "/info");
+  const it = pdItem(f);
+  const out = { kind: "file", title: f.name || "Pixeldrain file", items: [it] };
+  if (it.blocked) out.notice = "This file needs a captcha to download; open it on pixeldrain.com and download there.";
+  return out;
 }
 
 // ---------------------------------------------------------------- Koofr shared links
@@ -580,6 +635,9 @@ async function file(params, request, inline) {
   if (range && /^bytes=\d*-\d*$/.test(range)) upHeaders.range = range;
   const method = request && request.method === "HEAD" ? "HEAD" : "GET";
   const up = await get(upstreamUrl, { method, headers: upHeaders, redirect: "follow" }, "the file server");
+  if (up.status === 403) {
+    return new Response("The file host is asking for a captcha or blocking this download (403). Open the file on the host's own page and download it there.", { status: 403 });
+  }
   if (!(up.ok || up.status === 206) || (method === "GET" && !up.body)) {
     return new Response("The file server answered with HTTP " + up.status + ".", { status: 502 });
   }
