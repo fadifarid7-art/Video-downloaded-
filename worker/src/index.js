@@ -1,0 +1,398 @@
+/*
+ * Video Downloader helper (Cloudflare Worker).
+ *
+ *   GET /                  the page (served from public/)
+ *   GET /api/scan?url=…    read a page and list the videos and images on it
+ *       &all=1             on folder pages, also read every further page
+ *   GET /api/file?…        stream one file back marked as a download
+ *       url=…&name=…&ref=… a direct file link
+ *       page=…&slug=…      a file page with a token download button
+ *
+ * The API only answers requests that carry a valid Cloudflare Access login
+ * (set ACCESS_TEAM and ACCESS_AUD). Without them it refuses to work, so the
+ * helper can never be used by strangers as an open downloader.
+ */
+
+const VIDEO_EXT = ["mp4", "webm", "mov", "m4v", "mkv", "avi", "wmv", "flv"];
+const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "avif"];
+const STREAM_EXT = ["m3u8", "mpd"];
+const UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+const MAX_ITEMS = 500;
+const MAX_PAGES = 50;
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+
+    const who = await checkAccess(request, env);
+    if (!who.ok) return json({ error: who.message, code: "locked" }, 401);
+
+    try {
+      if (url.pathname === "/api/whoami") return json({ email: who.email || null });
+      if (url.pathname === "/api/scan") {
+        return json(await scan(url.searchParams.get("url"), url.searchParams.get("all") === "1"));
+      }
+      if (url.pathname === "/api/file") return await file(url.searchParams);
+      return json({ error: "Not found" }, 404);
+    } catch (e) {
+      return json({ error: e && e.message ? e.message : String(e) }, (e && e.status) || 502);
+    }
+  },
+};
+
+// ---------------------------------------------------------------- helpers
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+function extOf(s) {
+  const clean = String(s || "").split(/[?#]/)[0];
+  const m = clean.match(/\.([a-z0-9]{2,5})$/i);
+  return m ? m[1].toLowerCase() : "";
+}
+
+function kindOf(s) {
+  const e = extOf(s);
+  if (VIDEO_EXT.includes(e)) return "videos";
+  if (IMAGE_EXT.includes(e)) return "images";
+  if (STREAM_EXT.includes(e)) return "streams";
+  return "";
+}
+
+function decodeEntities(s) {
+  return String(s || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\\\//g, "/");
+}
+
+function absUrl(u, base) {
+  try {
+    const r = new URL(decodeEntities(u), base);
+    return /^https?:$/.test(r.protocol) ? r.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function nameFromUrl(u) {
+  try {
+    const last = new URL(u).pathname.split("/").filter(Boolean).pop() || "file";
+    return decodeURIComponent(last);
+  } catch {
+    return "file";
+  }
+}
+
+function attr(tag, name) {
+  const m = tag.match(new RegExp("\\s" + name + "\\s*=\\s*(\"([^\"]*)\"|'([^']*)')", "i"));
+  return m ? decodeEntities(m[2] !== undefined ? m[2] : m[3]) : "";
+}
+
+function inputError(message) {
+  const e = new Error(message);
+  e.status = 400;
+  return e;
+}
+
+function requireHttpUrl(raw) {
+  let u;
+  try {
+    u = new URL(String(raw || "").trim());
+  } catch {
+    throw inputError("That doesn't look like a web link. Paste the full address, starting with https://");
+  }
+  if (!/^https?:$/.test(u.protocol)) throw inputError("Only http and https links work.");
+  return u;
+}
+
+// fetch() that explains network failures in plain words
+async function get(url, init, what) {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    throw new Error("Couldn't reach " + what + " (" + new URL(url).hostname + ").");
+  }
+}
+
+async function fetchPage(u) {
+  const r = await get(u.href, {
+    headers: { "user-agent": UA, accept: "text/html,application/xhtml+xml,*/*;q=0.8", "accept-language": "en-US,en;q=0.9" },
+    redirect: "follow",
+  }, "that page");
+  if (!r.ok) throw new Error("The page answered with HTTP " + r.status + ".");
+  const type = r.headers.get("content-type") || "";
+  if (!/html|xml|text\/plain/i.test(type)) {
+    // The link is itself a file
+    return { html: "", finalUrl: new URL(r.url || u.href), directType: type, size: r.headers.get("content-length") || "" };
+  }
+  return { html: await r.text(), finalUrl: new URL(r.url || u.href) };
+}
+
+function fileLink(params) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+  return "/api/file?" + q.toString();
+}
+
+// ---------------------------------------------------------------- scanning
+
+async function scan(raw, all) {
+  const target = requireHttpUrl(raw);
+  const page = await fetchPage(target);
+  const base = page.finalUrl;
+
+  if (!page.html) {
+    const name = nameFromUrl(base.href);
+    const type = kindOf(name) || (/^video\//.test(page.directType) ? "videos" : /^image\//.test(page.directType) ? "images" : "other");
+    return {
+      kind: "file",
+      title: name,
+      items: [{ name, type, size: page.size, thumb: type === "images" ? base.href : "", dl: fileLink({ url: base.href, name }) }],
+    };
+  }
+
+  const title = decodeEntities((page.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || "").trim();
+
+  if (isFolderPage(page.html, base)) return await scanFolder(page.html, base, all, title);
+  if (isTokenFilePage(page.html, base)) return scanTokenFile(page.html, base, title);
+  return scanGeneric(page.html, base, title);
+}
+
+// Folder listing whose items open /d/<id> file pages.
+function isFolderPage(html, base) {
+  return /^\/f\//.test(base.pathname) && /class="file-item[^"]*"[\s\S]{0,600}?\/d\/[A-Za-z0-9_-]+/.test(html);
+}
+
+function readFolderItems(html, base) {
+  const out = [];
+  const re = /<div\b[^>]*class="file-item[^"]*"[^>]*>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const tag = m[0];
+    const slug = (attr(tag, "onclick").match(/\/d\/([A-Za-z0-9_-]+)/) || [])[1];
+    if (!slug) continue;
+    const name = attr(tag, "data-name") || slug;
+    const after = html.slice(re.lastIndex, re.lastIndex + 1500);
+    const img = after.match(/<img\b[^>]*>/i);
+    const fileUrl = base.origin + "/d/" + slug;
+    out.push({
+      name,
+      type: attr(tag, "data-type") || kindOf(name) || "other",
+      size: attr(tag, "data-size"),
+      thumb: img ? absUrl(attr(img[0], "src"), base) : "",
+      dl: fileLink({ page: fileUrl, slug }),
+      source: fileUrl,
+    });
+  }
+  return out;
+}
+
+async function scanFolder(html, base, all, title) {
+  let items = readFolderItems(html, base);
+  const total = parseInt((html.match(/id="loadAllPagesBtn"[^>]*data-total="(\d+)"/) || html.match(/data-total="(\d+)"[^>]*id="loadAllPagesBtn"/) || [])[1] || "1", 10);
+  if (all && total > 1) {
+    const seen = new Set(items.map((i) => i.dl));
+    for (let p = 2; p <= Math.min(total, MAX_PAGES) && items.length < MAX_ITEMS; p++) {
+      const u = new URL(base.origin + base.pathname);
+      u.searchParams.set("page", String(p));
+      const next = await fetchPage(u);
+      for (const it of readFolderItems(next.html, base)) {
+        if (!seen.has(it.dl)) { seen.add(it.dl); items.push(it); }
+      }
+    }
+  }
+  return { kind: "folder", title, pages: total, allPages: all || total <= 1, items: items.slice(0, MAX_ITEMS) };
+}
+
+// Single file page whose Download button asks the site for a one-time token.
+function isTokenFilePage(html, base) {
+  return /^\/d\/[A-Za-z0-9_-]+\/?$/.test(base.pathname) && /id="downloadButton"/.test(html);
+}
+
+function scanTokenFile(html, base, title) {
+  const slug = base.pathname.split("/").filter(Boolean).pop();
+  const js = (k) => decodeEntities((html.match(new RegExp("window\\." + k + "\\s*=\\s*\"([^\"]*)\"")) || [])[1] || "");
+  const name = js("fileName") || title.split("|")[0].trim() || slug;
+  const mime = js("fileType");
+  const type = /^video\//.test(mime) ? "videos" : /^image\//.test(mime) ? "images" : kindOf(name) || "other";
+  return {
+    kind: "file",
+    title,
+    items: [{ name, type, size: "", thumb: "", dl: fileLink({ page: base.href, slug }), source: base.href }],
+  };
+}
+
+// Any other page: video tags, media links, og: tags, images, media URLs inside scripts.
+function scanGeneric(html, base, title) {
+  const seen = new Set();
+  const items = [];
+  const add = (raw, opts = {}) => {
+    const u = absUrl(raw, base);
+    if (!u || seen.has(u) || items.length >= MAX_ITEMS) return;
+    const type = opts.type || kindOf(u);
+    if (!type) return;
+    if (type === "images" && /(^|[\/_.-])(logo|icon|sprite|favicon|avatar|emoji|badge|pixel|spacer|thumbs?|thumbnails?)([\/_.-]|$)/i.test(u)) return;
+    seen.add(u);
+    const name = opts.name || nameFromUrl(u);
+    items.push({
+      name,
+      type,
+      size: "",
+      thumb: opts.thumb || (type === "images" ? u : ""),
+      dl: type === "streams" ? "" : fileLink({ url: u, name, ref: base.href }),
+      source: u,
+    });
+  };
+
+  for (const m of html.matchAll(/<video\b[^>]*>[\s\S]*?<\/video>|<video\b[^>]*\/?>/gi)) {
+    const block = m[0];
+    const open = block.match(/<video\b[^>]*>/i)[0];
+    const poster = absUrl(attr(open, "poster"), base);
+    const src = attr(open, "src");
+    if (src) add(src, { type: kindOf(src) === "streams" ? "streams" : "videos", thumb: poster });
+    for (const s of block.matchAll(/<source\b[^>]*>/gi)) {
+      const ssrc = attr(s[0], "src");
+      if (ssrc) add(ssrc, { type: kindOf(ssrc) === "streams" ? "streams" : "videos", thumb: poster });
+    }
+  }
+  for (const m of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const prop = (attr(m[0], "property") || attr(m[0], "name")).toLowerCase();
+    const content = attr(m[0], "content");
+    if (!content) continue;
+    if (/^(og:video(:url|:secure_url)?|twitter:player:stream)$/.test(prop)) add(content, { type: kindOf(content) === "streams" ? "streams" : "videos" });
+    else if (/^(og:image(:url|:secure_url)?|twitter:image)$/.test(prop)) add(content, { type: "images" });
+  }
+  for (const m of html.matchAll(/<a\b[^>]*>/gi)) {
+    const href = attr(m[0], "href");
+    if (href && kindOf(href)) add(href);
+  }
+  for (const m of html.matchAll(/<img\b[^>]*>/gi)) {
+    const src = attr(m[0], "src") || attr(m[0], "data-src");
+    if (src && kindOf(src) === "images") add(src, { type: "images" });
+  }
+  for (const m of html.matchAll(/https?:(?:\\?\/){2}[^"'\s<>()]+?\.(?:mp4|webm|mov|m4v|m3u8|mpd)(?:\?[^"'\s<>()]*)?/gi)) {
+    add(m[0]);
+  }
+  return { kind: "page", title, items };
+}
+
+// ---------------------------------------------------------------- files
+
+function contentDisposition(name) {
+  const safe = String(name || "file").replace(/[\r\n"]/g, "").slice(0, 200) || "file";
+  const ascii = safe.replace(/[^\x20-\x7e]/g, "_");
+  return 'attachment; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(safe);
+}
+
+async function tokenDownloadUrl(pageUrl, slug) {
+  const r = await get(pageUrl.origin + "/v2/api/public/download", {
+    method: "POST",
+    headers: { "content-type": "application/json", "user-agent": UA, origin: pageUrl.origin, referer: pageUrl.href },
+    body: JSON.stringify({ file_slug: slug }),
+  }, "the site");
+  if (!r.ok) throw new Error("The site refused the download (HTTP " + r.status + ").");
+  const t = await r.json();
+  if (!t || !t.token || !t.file || !t.server) throw new Error("The site didn't return a download link.");
+  const u = t.server + "/v2/" + t.file + "?token=" + encodeURIComponent(t.token) + "&download=true" + (t.name ? "&n=" + encodeURIComponent(t.name) : "");
+  return { url: u, name: t.name || "" };
+}
+
+async function file(params) {
+  let upstreamUrl, name, referer;
+  if (params.get("slug") && params.get("page")) {
+    const pageUrl = requireHttpUrl(params.get("page"));
+    const slug = params.get("slug");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) throw inputError("Bad file id.");
+    const t = await tokenDownloadUrl(pageUrl, slug);
+    upstreamUrl = t.url;
+    name = t.name || params.get("name") || slug;
+    referer = pageUrl.href;
+  } else {
+    const u = requireHttpUrl(params.get("url"));
+    upstreamUrl = u.href;
+    name = params.get("name") || nameFromUrl(u.href);
+    referer = params.get("ref") || u.origin + "/";
+  }
+
+  const up = await get(upstreamUrl, { headers: { "user-agent": UA, referer }, redirect: "follow" }, "the file server");
+  if (!up.ok || !up.body) {
+    return json({ error: "The file server answered with HTTP " + up.status + "." }, 502);
+  }
+  const headers = new Headers({
+    "content-type": up.headers.get("content-type") || "application/octet-stream",
+    "content-disposition": contentDisposition(name),
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  });
+  const len = up.headers.get("content-length");
+  if (len) headers.set("content-length", len);
+  return new Response(up.body, { status: 200, headers });
+}
+
+// ---------------------------------------------------------------- login lock
+
+let certCache = { team: "", at: 0, keys: [] };
+
+function b64urlToBytes(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function accessKeys(team) {
+  if (certCache.team === team && Date.now() - certCache.at < 3600_000 && certCache.keys.length) return certCache.keys;
+  const r = await fetch("https://" + team + "/cdn-cgi/access/certs");
+  if (!r.ok) throw new Error("Couldn't load the login lock's keys (HTTP " + r.status + ").");
+  const data = await r.json();
+  certCache = { team, at: Date.now(), keys: data.keys || [] };
+  return certCache.keys;
+}
+
+function readToken(request) {
+  const h = request.headers.get("cf-access-jwt-assertion");
+  if (h) return h;
+  const cookie = request.headers.get("cookie") || "";
+  const m = cookie.match(/(?:^|;\s*)CF_Authorization=([^;]+)/);
+  return m ? m[1] : "";
+}
+
+async function checkAccess(request, env) {
+  if (env.ALLOW_OPEN === "1") return { ok: true, email: "local-test" };
+  const team = (env.ACCESS_TEAM || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const aud = env.ACCESS_AUD || "";
+  if (!team || !aud) {
+    return { ok: false, message: "The login lock isn't set up yet, so the helper is switched off. Finish the Cloudflare Access step in the setup guide." };
+  }
+  const token = readToken(request);
+  if (!token) return { ok: false, message: "You're not signed in. Reload the page to sign in." };
+  try {
+    const [h, p, s] = token.split(".");
+    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(h)));
+    const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(p)));
+    const jwk = (await accessKeys(team)).find((k) => k.kid === header.kid);
+    if (!jwk) throw new Error("unknown key");
+    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64urlToBytes(s), new TextEncoder().encode(h + "." + p));
+    if (!valid) throw new Error("bad signature");
+    const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    if (!auds.includes(aud)) throw new Error("wrong application");
+    if (payload.iss !== "https://" + team) throw new Error("wrong team");
+    if (!payload.exp || payload.exp * 1000 < Date.now()) throw new Error("expired");
+    return { ok: true, email: payload.email || "" };
+  } catch (e) {
+    return { ok: false, message: "Your sign-in couldn't be checked (" + e.message + "). Reload the page to sign in again." };
+  }
+}

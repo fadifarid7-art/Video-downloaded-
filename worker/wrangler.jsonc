@@ -1,0 +1,14 @@
+{
+  // Cloudflare Worker: serves the page (public/) and the helper API (src/index.js)
+  "name": "video-downloader",
+  "main": "src/index.js",
+  "compatibility_date": "2025-06-01",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "workers_dev": true,
+  // Keep the variables set in the dashboard when GitHub pushes a new version
+  "keep_vars": true,
+  "observability": { "enabled": true }
+  // Set these in the Cloudflare dashboard (Worker → Settings → Variables), not here:
+  //   ACCESS_TEAM  e.g. yourteam.cloudflareaccess.com
+  //   ACCESS_AUD   the Application Audience (AUD) tag of the Access application
+}
