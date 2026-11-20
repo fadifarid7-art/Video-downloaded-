@@ -346,6 +346,7 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
     var g = batch.groups[batch.next];
     if (!g) return;
     if (!navigator.canShare({ files: g })) { status("Your phone won't take these files together. Try fewer files (use the Videos or Images filter).", "err"); return; }
+    status("Opening the share sheet… If nothing appears, this browser can't save several files at once: use Download all with Automatic instead, or open this page in Safari.", "warn");
     navigator.share({ files: g }).then(function () {
       batch.next++;
       if (batch.next >= batch.groups.length) { var n = batch.groups.reduce(function (a, x) { return a + x.length; }, 0); resetBatch(); render(); status("Saved " + n + " files.", "ok"); }

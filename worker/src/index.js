@@ -236,8 +236,42 @@ async function scan(raw, all) {
   if (isFolderPage(page.html, base)) return await scanFolder(page.html, base, all, title);
   if (isTokenFilePage(page.html, base)) return scanTokenFile(page.html, base, title);
   const result = scanGeneric(page.html, base, title);
-  await fillSizes(result.items, 40);
+  const followed = await followFilePageLinks(page.html, base, result.items);
+  await fillSizes(result.items, Math.max(0, 40 - followed));
   return result;
+}
+
+// A page that lists links to single file pages (/d/<id>), like a post with
+// several file links: open each one and add its file. Capped so a search stays
+// within the free plan's limit of 50 outside requests.
+const MAX_FOLLOW = 30;
+async function followFilePageLinks(html, base, items) {
+  const seen = new Set(items.map((i) => i.source));
+  const links = [];
+  for (const m of html.matchAll(/<a\b[^>]*>/gi)) {
+    const u = absUrl(attr(m[0], "href"), base);
+    if (!u) continue;
+    const path = new URL(u).pathname;
+    if (/^\/d\/[A-Za-z0-9_-]{4,64}\/?$/.test(path) && !seen.has(u) && !links.includes(u)) links.push(u);
+    if (links.length >= MAX_FOLLOW) break;
+  }
+  await Promise.all(links.map(async (u) => {
+    try {
+      const pg = await fetchPage(new URL(u));
+      if (pg.html && isTokenFilePage(pg.html, pg.finalUrl)) {
+        const t = decodeEntities((pg.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || "").trim();
+        for (const it of scanTokenFile(pg.html, pg.finalUrl, t).items) {
+          if (!seen.has(it.source)) { seen.add(it.source); it._at = links.indexOf(u); items.push(it); }
+        }
+      }
+    } catch {}
+  }));
+  // keep the order the links appear in on the page
+  const tail = items.filter((i) => i._at !== undefined).sort((a, b) => a._at - b._at);
+  const head = items.filter((i) => i._at === undefined);
+  items.length = 0;
+  for (const i of head.concat(tail)) { delete i._at; items.push(i); }
+  return links.length;
 }
 
 // Folder listing whose items open /d/<id> file pages.
