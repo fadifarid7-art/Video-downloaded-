@@ -227,7 +227,7 @@ async function scan(raw, all) {
     return {
       kind: "file",
       title: name,
-      items: [{ name, type, size: page.size, thumb: type === "images" ? base.href : "", dl: fileLink({ url: base.href, name }) }],
+      items: [{ name, type, size: page.size, thumb: type === "images" ? base.href : "", dl: fileLink({ url: base.href, name }), source: base.href }],
     };
   }
 

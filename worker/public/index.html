@@ -16,11 +16,15 @@ h1{font-size:1.5rem;margin:0 0 4px}
 .lead{color:var(--muted);margin:0 0 16px;font-size:15px}
 form{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px}
 .inrow{display:flex;gap:8px}
-input[type=url]{flex:1;min-width:0;font:inherit;font-size:16px;padding:11px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+#url{flex:1;min-width:0;resize:vertical;min-height:46px;line-height:1.35;font:inherit;font-size:16px;padding:11px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 .btn{font:inherit;font-weight:600;font-size:15px;border-radius:8px;padding:11px 16px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--fg);text-decoration:none;display:inline-block;text-align:center}
 .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .btn.go{background:var(--ok);color:#0b1220;border-color:var(--ok)}
 .btn:disabled{opacity:.5;cursor:default}
+.btn.save{background:var(--image);color:#fff;border-color:var(--image)}
+label.auto{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);padding:0 4px}
+.progress{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:-2px 0 10px}
+.progress>i{display:block;height:100%;width:0;background:var(--image);transition:width .2s}
 label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--muted)}
 .status{margin:12px 2px;font-size:14px;color:var(--muted);min-height:1.3em}
 .status.ok{color:var(--ok)}.status.warn{color:var(--warn)}.status.err{color:var(--err)}
@@ -63,11 +67,11 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
 <body>
 <div class="wrap">
   <h1>Video Downloader</h1>
-  <p class="lead">Paste a link to a page, a file or a folder. You'll get a list of its videos and images with download buttons.</p>
+  <p class="lead">Paste a link to a page, a file or a folder, or several links, one per line. You'll get a list of its videos and images with download buttons.</p>
 
   <form id="form">
     <div class="inrow">
-      <input type="url" id="url" placeholder="https://…" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <textarea id="url" rows="2" placeholder="https://…  (one link per line for several)" autocomplete="off" autocapitalize="off" spellcheck="false" required></textarea>
       <button type="button" class="btn" id="paste">Paste</button>
     </div>
     <label class="opt"><input type="checkbox" id="all" checked> On folders, include every page</label>
@@ -90,6 +94,7 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
       </label>
     </div>
     <div class="tools" id="tools"></div>
+    <div class="progress" id="prog" hidden><i id="progbar"></i></div>
     <div class="list" id="list"></div>
   </section>
 
@@ -146,31 +151,46 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
 
   $("paste").addEventListener("click", function () {
     if (!navigator.clipboard || !navigator.clipboard.readText) { status("Your browser won't let the page read the clipboard. Long-press the box and choose Paste.", "warn"); return; }
-    navigator.clipboard.readText().then(function (t) { $("url").value = (t || "").trim(); $("url").focus(); },
+    navigator.clipboard.readText().then(function (t) {
+      t = (t || "").trim(); var cur = $("url").value.trim();
+      $("url").value = cur && t && cur.indexOf(t) < 0 ? cur + "\n" + t : (t || cur); $("url").focus();
+    },
       function () { status("Clipboard access was blocked. Long-press the box and choose Paste.", "warn"); });
   });
 
   $("form").addEventListener("submit", function (e) {
     e.preventDefault();
-    var u = $("url").value.trim();
-    if (!u) return;
-    try { localStorage.setItem("vdl:last", u); } catch (er) {}
+    var raw = $("url").value.trim();
+    if (!raw) return;
+    var links = (raw.match(/https?:\/\/[^\s<>"']+/g) || []).filter(function (l, n, a) { return a.indexOf(l) === n; });
+    if (!links.length) { status("That doesn't look like a web link. Paste the full address, starting with https://", "err"); return; }
+    try { localStorage.setItem("vdl:last", raw); } catch (er) {}
     $("scan").disabled = true;
-    status("Reading the page…");
     $("results").hidden = true;
-    fetch("/api/scan?url=" + encodeURIComponent(u) + ($("all").checked ? "&all=1" : ""), { credentials: "same-origin" })
-      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }, function () { return { ok: false, d: { error: "Unexpected answer (HTTP " + r.status + ")." } }; }); })
-      .then(function (res) {
-        if (!res.ok) { status(res.d.error || "Something went wrong.", "err"); return; }
-        items = (res.d.items || []).map(function (it, n) { it.order = n; return it; }); filter = "all"; queuePos = 0;
-        $("rtitle").textContent = res.d.title || u;
-        render();
-        $("results").hidden = false;
-        if (!items.length) status("No videos or images found on that page. Some sites load them only after you press play, which this can't see.", "warn");
-        else status("Found " + summary() + ".", "ok");
-      })
-      .catch(function () { status("Couldn't reach the helper. Check your connection and try again.", "err"); })
-      .then(function () { $("scan").disabled = false; });
+    stopAuto(); resetBatch();
+    var found = [], failed = [], title = "", n = 0;
+    function scanOne() {
+      if (n >= links.length) return Promise.resolve();
+      var u = links[n++];
+      status("Reading " + (links.length > 1 ? "link " + n + " of " + links.length : "the page") + "…");
+      return fetch("/api/scan?url=" + encodeURIComponent(u) + ($("all").checked ? "&all=1" : ""), { credentials: "same-origin" })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }, function () { return { ok: false, d: { error: "Unexpected answer (HTTP " + r.status + ")." } }; }); })
+        .then(function (res) {
+          if (!res.ok) { failed.push(u + ": " + (res.d.error || "error")); return; }
+          if (!title) title = res.d.title || u;
+          (res.d.items || []).forEach(function (it) { if (!found.some(function (f) { return f.source && f.source === it.source; })) found.push(it); });
+        }, function () { failed.push(u + ": couldn't reach the helper"); })
+        .then(scanOne);
+    }
+    scanOne().then(function () {
+      items = found.map(function (it, k) { it.order = k; return it; }); filter = "all"; queuePos = 0;
+      $("rtitle").textContent = links.length > 1 ? links.length + " links" : (title || links[0]);
+      render();
+      $("results").hidden = false;
+      var tail = failed.length ? " Couldn't read: " + failed.join("; ") : "";
+      if (!items.length) status((failed.length ? "Nothing found." : "No videos or images found on that page. Some sites load them only after you press play, which this can't see.") + tail, failed.length ? "err" : "warn");
+      else status("Found " + summary() + "." + tail, failed.length ? "warn" : "ok");
+    }).then(function () { $("scan").disabled = false; });
   });
 
   function summary() {
@@ -196,24 +216,43 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
 
     var tools = $("tools"); tools.textContent = "";
     var q = downloadable();
+    function addBtn(cls, text, fn) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "btn " + cls; b.textContent = text;
+      b.addEventListener("click", fn); tools.appendChild(b); return b;
+    }
+    if (q.length && CAN_SHARE) {
+      // Save all: one share sheet, one folder pick, real files
+      if (batch.ready && batch.key === listKey(q)) {
+        var g = batch.groups[batch.next];
+        addBtn("go", batch.groups.length > 1 ? "Save group " + (batch.next + 1) + " of " + batch.groups.length + " (" + g.length + " files)" : "Save " + g.length + " file" + (g.length > 1 ? "s" : "") + " now", shareGroup);
+        addBtn("", "Cancel", function () { resetBatch(); render(); status(""); });
+      } else {
+        var sb = addBtn("save", batch.loading ? "Loading… " + batch.done + " of " + batch.total : "Save all " + q.length + " to a folder", loadBatch);
+        sb.disabled = batch.loading;
+      }
+    }
     if (q.length > 1) {
-      if (queuePos >= q.length) queuePos = 0;
-      var qb = document.createElement("button"); qb.type = "button";
-      qb.className = "btn " + (queuePos ? "go" : "primary");
-      qb.textContent = queuePos ? "Next: " + (queuePos + 1) + " of " + q.length : "Download all " + q.length;
-      qb.addEventListener("click", function () {
-        var it = downloadable()[queuePos];
-        location.href = it.dl;
-        status("Started " + it.name + " (" + (queuePos + 1) + " of " + q.length + "). Save it, then tap Next.", "ok");
-        queuePos++;
-        if (queuePos >= q.length) { queuePos = 0; status("Started all " + q.length + " downloads.", "ok"); }
-        render();
-      });
-      tools.appendChild(qb);
-      if (queuePos) {
-        var rb = document.createElement("button"); rb.type = "button"; rb.className = "btn"; rb.textContent = "Restart";
-        rb.addEventListener("click", function () { queuePos = 0; render(); });
-        tools.appendChild(rb);
+      if (autoTimer) {
+        addBtn("go", "Stop (" + autoPos + " of " + q.length + " started)", function () { stopAuto(); status("Stopped.", "warn"); render(); });
+      } else {
+        if (queuePos >= q.length) queuePos = 0;
+        var qb = addBtn(queuePos ? "go" : "primary", queuePos ? "Next: " + (queuePos + 1) + " of " + q.length : "Download all " + q.length, function () {
+          if ($("auto") && $("auto").checked && !queuePos) { startAuto(); return; }
+          var it = downloadable()[queuePos];
+          location.href = it.dl;
+          status("Started " + it.name + " (" + (queuePos + 1) + " of " + q.length + "). Save it, then tap Next.", "ok");
+          queuePos++;
+          if (queuePos >= q.length) { queuePos = 0; status("Started all " + q.length + " downloads.", "ok"); }
+          render();
+        });
+        if (queuePos) addBtn("", "Restart", function () { queuePos = 0; render(); });
+        else {
+          var lab = document.createElement("label"); lab.className = "auto";
+          var cbx = document.createElement("input"); cbx.type = "checkbox"; cbx.id = "auto"; cbx.checked = autoPref;
+          cbx.addEventListener("change", function () { autoPref = cbx.checked; try { localStorage.setItem("vdl:auto", autoPref ? "1" : ""); } catch (e) {} });
+          lab.appendChild(cbx); lab.appendChild(document.createTextNode("Automatic"));
+          tools.appendChild(lab);
+        }
       }
     }
     if (shown().length) {
@@ -255,6 +294,86 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
       row.appendChild(th); row.appendChild(meta); row.appendChild(a);
       list.appendChild(row);
     });
+  }
+
+  // ---- Save all to a folder (share sheet) ----
+  var CAN_SHARE = (function () {
+    try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [new File(["x"], "t.jpg", { type: "image/jpeg" })] })); }
+    catch (e) { return false; }
+  })();
+  var GROUP_BYTES = 700 * 1048576; // keep each share sheet small enough for a phone's memory
+  var MIME = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", heic: "image/heic" };
+  var batch;
+  function resetBatch() { batch = { loading: false, ready: false, done: 0, total: 0, groups: [], next: 0, key: "" }; progress(null); }
+  resetBatch();
+  function listKey(list) { return list.map(function (i) { return i.dl; }).join("|"); }
+  function progress(p) { $("prog").hidden = p === null; if (p !== null) $("progbar").style.width = Math.round(p * 100) + "%"; }
+  function loadBatch() {
+    var list = downloadable();
+    if (!list.length || batch.loading) return;
+    resetBatch();
+    batch.loading = true; batch.total = list.length; batch.key = listKey(list);
+    var files = [], failed = [], k = 0;
+    render(); progress(0);
+    function next() {
+      if (k >= list.length) return Promise.resolve();
+      var it = list[k++];
+      status("Loading " + k + " of " + list.length + ": " + it.name + "…");
+      return fetch(it.dl).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+        .then(function (b) {
+          var ext = (it.name.split(".").pop() || "").toLowerCase();
+          files.push(new File([b], it.name, { type: MIME[ext] || b.type || "application/octet-stream" }));
+        }, function () { failed.push(it.name); })
+        .then(function () { batch.done = k; progress(k / list.length); render(); return next(); });
+    }
+    next().then(function () {
+      batch.loading = false;
+      if (!files.length) { resetBatch(); render(); status("Couldn't load any of the files.", "err"); return; }
+      var groups = [[]], size = 0;
+      files.forEach(function (f) {
+        if (groups[groups.length - 1].length && size + f.size > GROUP_BYTES) { groups.push([]); size = 0; }
+        groups[groups.length - 1].push(f); size += f.size;
+      });
+      batch.groups = groups; batch.ready = true; batch.next = 0;
+      render();
+      var total = files.reduce(function (a, f) { return a + f.size; }, 0);
+      status(files.length + " files ready (" + fmt(total) + "). Tap the green button, choose Save to Files, then pick your folder." +
+        (groups.length > 1 ? " They're split into " + groups.length + " groups so your phone can handle them." : "") +
+        (failed.length ? " Couldn't load: " + failed.join(", ") + "." : ""), failed.length ? "warn" : "ok");
+    });
+  }
+  function shareGroup() {
+    var g = batch.groups[batch.next];
+    if (!g) return;
+    if (!navigator.canShare({ files: g })) { status("Your phone won't take these files together. Try fewer files (use the Videos or Images filter).", "err"); return; }
+    navigator.share({ files: g }).then(function () {
+      batch.next++;
+      if (batch.next >= batch.groups.length) { var n = batch.groups.reduce(function (a, x) { return a + x.length; }, 0); resetBatch(); render(); status("Saved " + n + " files.", "ok"); }
+      else { render(); status("Group " + batch.next + " saved. Tap the green button for the next group.", "ok"); }
+    }).catch(function (e) {
+      if (e && e.name === "AbortError") status("Cancelled. Tap the green button to try again.");
+      else status("The share sheet didn't open (" + (e && e.message || "unknown") + ").", "err");
+    });
+  }
+
+  // ---- Download all automatically ----
+  var autoTimer = null, autoPos = 0, autoPref = false;
+  try { autoPref = localStorage.getItem("vdl:auto") === "1"; } catch (e) {}
+  function stopAuto() { if (autoTimer) clearTimeout(autoTimer); autoTimer = null; autoPos = 0; }
+  function startAuto() {
+    var list = downloadable();
+    autoPos = 0;
+    function step() {
+      if (autoPos >= list.length) { autoTimer = null; autoPos = 0; render(); status("Started all " + list.length + " downloads. Check your browser's downloads.", "ok"); return; }
+      var it = list[autoPos++];
+      var f = document.createElement("iframe"); f.style.display = "none"; f.src = it.dl; document.body.appendChild(f);
+      setTimeout(function () { f.remove(); }, 120000);
+      status("Started " + it.name + " (" + autoPos + " of " + list.length + ")…", "ok");
+      autoTimer = setTimeout(step, 3500);
+      render();
+    }
+    autoTimer = setTimeout(step, 0);
+    render();
   }
 
   // ---- Watch in the page ----
