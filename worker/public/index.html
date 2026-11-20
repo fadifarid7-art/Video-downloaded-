@@ -236,21 +236,36 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
     }
     if (q.length > 1) {
       if (autoTimer) {
-        addBtn("go", "Stop (" + autoPos + " of " + autoTotal + " started)", function () { var n = autoPos; stopAuto(); status("Stopped after " + n + " of " + autoTotal + ". Files marked Started were sent to your browser.", "warn"); render(); });
+        addBtn("go", "Stop (" + autoPos + " of " + autoTotal + " started)", function () { var n = autoPos; stopAuto(); status("Stopped after " + n + " of " + autoTotal + ". Files marked Started were already sent to your browser; cancel any of those in its downloads list. Tap \"Download the other …\" to carry on later.", "warn"); render(); });
       } else {
         if (queuePos >= q.length) queuePos = 0;
-        var qb = addBtn(queuePos ? "go" : "primary", queuePos ? "Next: " + (queuePos + 1) + " of " + q.length : "Download all " + q.length, function () {
+        var remaining = q.filter(function (i) { return !started[i.dl]; }).length;
+        var someDone = remaining < q.length;
+        var label = queuePos ? "Next: " + (queuePos + 1) + " of " + q.length
+          : !remaining ? "Download all " + q.length + " again"
+          : someDone ? "Download the other " + remaining
+          : "Download all " + q.length;
+        var qb = addBtn(queuePos ? "go" : "primary", label, function () {
+          if (!queuePos && !remaining) { started = {}; render(); return; }
           if ($("auto") && $("auto").checked && !queuePos) { startAuto(); return; }
+          if (!queuePos && someDone) {
+            // manual mode: jump to the first file not started yet
+            var all = downloadable();
+            for (var k = 0; k < all.length; k++) if (!started[all[k].dl]) { queuePos = k; break; }
+          }
           var it = downloadable()[queuePos];
           started[it.dl] = true;
           location.href = it.dl;
           status("Started " + it.name + " (" + (queuePos + 1) + " of " + q.length + "). Save it, then tap Next.", "ok");
           queuePos++;
-          if (queuePos >= q.length) { queuePos = 0; status("Started all " + q.length + " downloads.", "ok"); }
+          var all2 = downloadable();
+          while (queuePos < all2.length && started[all2[queuePos].dl]) queuePos++;   // skip files already started
+          if (queuePos >= q.length) { queuePos = 0; status("All " + q.length + " downloads started.", "ok"); }
           render();
         });
         if (queuePos) addBtn("", "Restart", function () { queuePos = 0; render(); });
         else {
+          if (someDone && remaining) addBtn("", "Start over", function () { started = {}; render(); status(""); });
           var lab = document.createElement("label"); lab.className = "auto";
           var cbx = document.createElement("input"); cbx.type = "checkbox"; cbx.id = "auto"; cbx.checked = autoPref;
           cbx.addEventListener("change", function () { autoPref = cbx.checked; try { localStorage.setItem("vdl:auto", autoPref ? "1" : ""); } catch (e) {} });
@@ -389,7 +404,8 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
     progress(autoTotal ? autoPos / autoTotal : 0);
   }
   function startAuto() {
-    var list = downloadable();
+    var list = downloadable().filter(function (i) { return !started[i.dl]; });
+    if (!list.length) return;
     autoPos = 0; autoTotal = list.length;
     var gap = +autoSpeed || 3000;
     function step() {
