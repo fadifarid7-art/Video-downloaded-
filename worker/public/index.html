@@ -239,6 +239,13 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     if (c.other) p.push(plural(c.other, "other file"));
     return p.join(" · ");
   }
+  // Total size of a list, e.g. "3.4 MB" or "3.4 MB + 2 of unknown size"
+  function totalText(list) {
+    var sum = 0, unknown = 0;
+    list.forEach(function (i) { if (+i.size > 0) sum += +i.size; else unknown++; });
+    if (!sum) return unknown ? "" : "";
+    return fmt(sum) + (unknown ? " + " + unknown + " of unknown size" : "");
+  }
   function viewUrl(i) { return i.dl + (i.dl.indexOf("?") < 0 ? "?" : "&") + "view=1"; }
   function send(i) {
     started[i.dl] = true;
@@ -285,7 +292,8 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     next().then(function () {
       items = found.map(function (it, k) { it.order = k; return it; }); filter = "all";
       $("rtitle").textContent = links.length > 1 ? plural(links.length, "link") : (title.replace(/\s*\|\s*[^|]+$/, "") || links[0]);
-      $("rsum").textContent = summary();
+      var tot = totalText(items);
+      $("rsum").textContent = summary() + (tot ? " · " + tot + " total" : "");
       render();
       $("results").hidden = false;
       var tail = failed.length ? " Couldn't read " + plural(failed.length, "link") + ": " + failed.join("; ") : "";
@@ -315,6 +323,11 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   $("startOver").addEventListener("click", function () { started = {}; manualNext = -1; render(); status(""); });
 
   // ---------- render ----------
+  function sizeTag(list) {
+    var sum = 0, unknown = 0;
+    list.forEach(function (i) { if (+i.size > 0) sum += +i.size; else unknown++; });
+    return sum ? " · " + fmt(sum) + (unknown ? "+" : "") : "";
+  }
   function render() {
     // chips
     var c = { all: items.length }; items.forEach(function (i) { c[i.type] = (c[i.type] || 0) + 1; });
@@ -339,14 +352,16 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     btn.disabled = running;
     if (running) btn.textContent = "Downloading…";
     else if (mode === "manual" && manualNext >= 0) btn.textContent = "Next: " + (q.length - left.length + 1) + " of " + q.length;
-    else if (!left.length) btn.textContent = "Download all " + q.length + " again";
-    else if (left.length < q.length) btn.textContent = "Download the other " + left.length;
-    else btn.textContent = q.length === 1 ? "Download" : "Download all " + q.length;
+    else if (!left.length) btn.textContent = "Download all " + q.length + " again" + sizeTag(q);
+    else if (left.length < q.length) btn.textContent = "Download the other " + left.length + sizeTag(left);
+    else btn.textContent = (q.length === 1 ? "Download" : "Download all " + q.length) + sizeTag(q);
     $("startOver").hidden = left.length === q.length;
     var spd = $("speed").options[$("speed").selectedIndex].text.toLowerCase();
-    $("hint").textContent = mode === "manual"
+    var unk = left.filter(function (i) { return !(+i.size > 0); }).length;
+    var unkNote = unk && unk < left.length ? " " + plural(unk, "file") + " don't list a size, so the total may be higher." : "";
+    $("hint").textContent = (mode === "manual"
       ? "Tap once per file. Your browser asks where to save each one."
-      : "Starts each file for you (" + spd + "). Save each one as your browser asks.";
+      : "Starts each file for you (" + spd + "). Save each one as your browser asks.") + unkNote;
     $("shareAll").hidden = !CAN_SHARE;
 
     // list
