@@ -43,6 +43,20 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
 .dl.off{background:var(--line);color:var(--muted);pointer-events:none}
 .empty{color:var(--muted);font-size:14px;padding:6px 2px}
 .help{margin-top:28px;font-size:13.5px;color:var(--muted)}
+.sortbox{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);margin-left:auto}
+.sortbox select{font:inherit;font-size:14px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.th,.meta{cursor:pointer}
+.th{position:relative}
+.play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:20px;text-shadow:0 1px 4px rgba(0,0,0,.6)}
+.viewer[hidden]{display:none}
+.viewer{position:fixed;inset:0;z-index:50;background:rgba(5,8,14,.9);display:flex;align-items:center;justify-content:center;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.vpanel{width:100%;max-width:900px;max-height:100%;display:flex;flex-direction:column;gap:10px}
+.vmedia{background:#000;border-radius:10px;overflow:hidden;display:grid;place-items:center;min-height:120px}
+.vmedia video,.vmedia img{max-width:100%;max-height:72vh;display:block}
+.vbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.vname{color:#e6ebf2;font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vbtn{font:inherit;font-weight:600;font-size:15px;border-radius:8px;padding:10px 14px;border:0;cursor:pointer;text-decoration:none}
+.vbtn.dlb{background:#6f95ff;color:#0b1220}.vbtn.nav{background:#283242;color:#e6ebf2}.vbtn:disabled{opacity:.4}
 .help b{color:var(--fg)}
 </style>
 </head>
@@ -66,22 +80,66 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
     <div class="rhead">
       <div class="rtitle" id="rtitle"></div>
       <div id="chips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      <label class="sortbox">Sort
+        <select id="sort">
+          <option value="page">As on page</option>
+          <option value="small">Smallest first</option>
+          <option value="large">Largest first</option>
+          <option value="name">Name A–Z</option>
+        </select>
+      </label>
     </div>
     <div class="tools" id="tools"></div>
     <div class="list" id="list"></div>
   </section>
 
-  <p class="help"><b>Tip:</b> each Download opens your browser's own download menu, where you pick where to save. <b>Download all, one by one</b> starts the next file each time you tap it.</p>
+  <div class="viewer" id="viewer" hidden>
+    <div class="vpanel" role="dialog" aria-modal="true" aria-labelledby="vname">
+      <div class="vmedia" id="vmedia"></div>
+      <div class="vbar">
+        <button type="button" class="vbtn nav" id="vprev" aria-label="Previous">‹</button>
+        <div class="vname" id="vname"></div>
+        <button type="button" class="vbtn nav" id="vnext" aria-label="Next">›</button>
+      </div>
+      <div class="vbar">
+        <a class="vbtn dlb" id="vdl" href="#">Download</a>
+        <button type="button" class="vbtn nav" id="vclose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="help"><b>Tip:</b> tap a file's picture or name to watch it here. Each Download opens your browser's own download menu, where you pick where to save. <b>Download all</b> starts the next file each time you tap it (iPhones allow one download per tap).</p>
 </div>
 
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var items = [], filter = "all", queuePos = 0;
+  var items = [], filter = "all", queuePos = 0, sortMode = "page", viewList = [], viewPos = 0;
+  try { sortMode = localStorage.getItem("vdl:sort") || "page"; } catch (e) {}
+  $("sort").value = sortMode;
+  $("sort").addEventListener("change", function () {
+    sortMode = $("sort").value; queuePos = 0;
+    try { localStorage.setItem("vdl:sort", sortMode); } catch (e) {}
+    render();
+  });
 
   function status(t, k) { var s = $("status"); s.textContent = t || ""; s.className = "status" + (k ? " " + k : ""); }
   function fmt(b) { b = +b; if (!b) return ""; if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KB"; if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB"; return (b / 1073741824).toFixed(2) + " GB"; }
-  function shown() { return items.filter(function (i) { return filter === "all" || i.type === filter; }); }
+  function shown() {
+    var list = items.filter(function (i) { return filter === "all" || i.type === filter; });
+    if (sortMode === "small" || sortMode === "large") {
+      var dir = sortMode === "small" ? 1 : -1;
+      list = list.slice().sort(function (a, b) {
+        var x = +a.size || 0, y = +b.size || 0;
+        if (!x && !y) return a.order - b.order;
+        if (!x) return 1; if (!y) return -1;   // unknown sizes go last
+        return (x - y) * dir || a.order - b.order;
+      });
+    } else if (sortMode === "name") {
+      list = list.slice().sort(function (a, b) { return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }); });
+    }
+    return list;
+  }
   function downloadable() { return shown().filter(function (i) { return i.dl; }); }
 
   try { var last = localStorage.getItem("vdl:last"); if (last) $("url").value = last; } catch (e) {}
@@ -104,7 +162,7 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }, function () { return { ok: false, d: { error: "Unexpected answer (HTTP " + r.status + ")." } }; }); })
       .then(function (res) {
         if (!res.ok) { status(res.d.error || "Something went wrong.", "err"); return; }
-        items = res.d.items || []; filter = "all"; queuePos = 0;
+        items = (res.d.items || []).map(function (it, n) { it.order = n; return it; }); filter = "all"; queuePos = 0;
         $("rtitle").textContent = res.d.title || u;
         render();
         $("results").hidden = false;
@@ -142,7 +200,7 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
       if (queuePos >= q.length) queuePos = 0;
       var qb = document.createElement("button"); qb.type = "button";
       qb.className = "btn " + (queuePos ? "go" : "primary");
-      qb.textContent = queuePos ? "Next: " + (queuePos + 1) + " of " + q.length : "Download all " + q.length + ", one by one";
+      qb.textContent = queuePos ? "Next: " + (queuePos + 1) + " of " + q.length : "Download all " + q.length;
       qb.addEventListener("click", function () {
         var it = downloadable()[queuePos];
         location.href = it.dl;
@@ -174,9 +232,16 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
     s.forEach(function (i) {
       var row = document.createElement("div"); row.className = "row";
       var th = document.createElement("div"); th.className = "th";
+      var meta = document.createElement("div"); meta.className = "meta";
+      var canView = !!i.dl && (i.type === "videos" || i.type === "images");
+      if (canView) {
+        th.addEventListener("click", function () { openViewer(i); });
+        meta.addEventListener("click", function () { openViewer(i); });
+        th.title = meta.title = "Watch";
+      }
       if (i.thumb) { var im = document.createElement("img"); im.src = i.thumb; im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; im.onerror = function () { im.remove(); th.textContent = i.type === "videos" ? "VIDEO" : "FILE"; }; th.appendChild(im); }
       else th.textContent = i.type === "videos" ? "VIDEO" : i.type === "streams" ? "STREAM" : i.type === "images" ? "IMAGE" : "FILE";
-      var meta = document.createElement("div"); meta.className = "meta";
+      if (canView && i.type === "videos") { var pl = document.createElement("span"); pl.className = "play"; pl.textContent = "▶"; th.appendChild(pl); }
       var nm = document.createElement("div"); nm.className = "nm"; nm.textContent = i.name;
       var sub = document.createElement("div"); sub.className = "sub";
       var tag = document.createElement("span"); tag.className = "tag " + i.type;
@@ -191,6 +256,42 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
       list.appendChild(row);
     });
   }
+
+  // ---- Watch in the page ----
+  function viewUrl(i) { return i.dl + (i.dl.indexOf("?") < 0 ? "?" : "&") + "view=1"; }
+  function openViewer(i) {
+    viewList = shown().filter(function (x) { return x.dl && (x.type === "videos" || x.type === "images"); });
+    viewPos = Math.max(0, viewList.indexOf(i));
+    showCurrent();
+    $("viewer").hidden = false;
+    $("vclose").focus();
+  }
+  function showCurrent() {
+    var i = viewList[viewPos], m = $("vmedia");
+    m.textContent = "";
+    if (i.type === "videos") {
+      var v = document.createElement("video");
+      v.controls = true; v.playsInline = true; v.autoplay = true; v.preload = "metadata"; v.src = viewUrl(i);
+      v.onerror = function () { m.textContent = ""; var e = document.createElement("div"); e.style.cssText = "color:#e6ebf2;padding:20px;font-size:14px"; e.textContent = "This video won't play here. Download it to watch it."; m.appendChild(e); };
+      m.appendChild(v);
+    } else {
+      var img = document.createElement("img"); img.alt = i.name; img.src = viewUrl(i); m.appendChild(img);
+    }
+    $("vname").textContent = (viewPos + 1) + " / " + viewList.length + " · " + i.name + (i.size ? " · " + fmt(i.size) : "");
+    $("vdl").href = i.dl; $("vdl").setAttribute("download", i.name);
+    $("vprev").disabled = viewPos === 0; $("vnext").disabled = viewPos >= viewList.length - 1;
+  }
+  function closeViewer() { $("viewer").hidden = true; $("vmedia").textContent = ""; }
+  $("vclose").addEventListener("click", closeViewer);
+  $("vprev").addEventListener("click", function () { if (viewPos > 0) { viewPos--; showCurrent(); } });
+  $("vnext").addEventListener("click", function () { if (viewPos < viewList.length - 1) { viewPos++; showCurrent(); } });
+  $("viewer").addEventListener("click", function (e) { if (e.target.id === "viewer") closeViewer(); });
+  document.addEventListener("keydown", function (e) {
+    if ($("viewer").hidden) return;
+    if (e.key === "Escape") closeViewer();
+    else if (e.key === "ArrowLeft") $("vprev").click();
+    else if (e.key === "ArrowRight") $("vnext").click();
+  });
 
   // Tell the person straight away if the helper is locked or not set up
   fetch("/api/whoami", { credentials: "same-origin" }).then(function (r) {

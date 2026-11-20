@@ -35,7 +35,7 @@ export default {
       try {
         const params = await verifyLink(url.pathname, env);
         if (!params) return new Response("This download link is invalid or has expired. Search again for a fresh one.", { status: 403 });
-        return await file(params);
+        return await file(params, request, url.searchParams.get("view") === "1");
       } catch (e) {
         return new Response("Download failed: " + (e && e.message ? e.message : String(e)), { status: (e && e.status) || 502 });
       }
@@ -235,7 +235,9 @@ async function scan(raw, all) {
 
   if (isFolderPage(page.html, base)) return await scanFolder(page.html, base, all, title);
   if (isTokenFilePage(page.html, base)) return scanTokenFile(page.html, base, title);
-  return scanGeneric(page.html, base, title);
+  const result = scanGeneric(page.html, base, title);
+  await fillSizes(result.items, 40);
+  return result;
 }
 
 // Folder listing whose items open /d/<id> file pages.
@@ -356,15 +358,34 @@ function scanGeneric(html, base, title) {
   return { kind: "page", title, items };
 }
 
-// ---------------------------------------------------------------- files
-
-function contentDisposition(name) {
-  const safe = String(name || "file").replace(/[\r\n"]/g, "").slice(0, 200) || "file";
-  const ascii = safe.replace(/[^\x20-\x7e]/g, "_");
-  return 'attachment; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(safe);
+// Look up file sizes the page didn't list, so results can be sorted by size.
+async function fillSizes(items, budget) {
+  const todo = items.filter((i) => !i.size && i.dl && i.dl.url).slice(0, budget);
+  await Promise.all(todo.map(async (i) => {
+    try {
+      const r = await fetch(i.dl.url, { method: "HEAD", headers: { "user-agent": UA, referer: i.dl.ref || "" }, redirect: "follow" });
+      const len = r.ok && r.headers.get("content-length");
+      if (len && +len > 0) i.size = len;
+    } catch {}
+  }));
 }
 
+// ---------------------------------------------------------------- files
+
+function contentDisposition(name, inline) {
+  const safe = String(name || "file").replace(/[\r\n"]/g, "").slice(0, 200) || "file";
+  const ascii = safe.replace(/[^\x20-\x7e]/g, "_");
+  return (inline ? "inline" : "attachment") + '; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(safe);
+}
+
+// Players ask for a video in many small pieces; reuse one site token per file
+// for a while instead of asking the site again for every piece.
+const tokenCache = new Map();
+
 async function tokenDownloadUrl(pageUrl, slug) {
+  const key = pageUrl.origin + "|" + slug;
+  const hit = tokenCache.get(key);
+  if (hit && hit.until > Date.now()) return hit.value;
   const r = await get(pageUrl.origin + "/v2/api/public/download", {
     method: "POST",
     headers: { "content-type": "application/json", "user-agent": UA, origin: pageUrl.origin, referer: pageUrl.href },
@@ -374,10 +395,14 @@ async function tokenDownloadUrl(pageUrl, slug) {
   const t = await r.json();
   if (!t || !t.token || !t.file || !t.server) throw new Error("The site didn't return a download link.");
   const u = t.server + "/v2/" + t.file + "?token=" + encodeURIComponent(t.token) + "&download=true" + (t.name ? "&n=" + encodeURIComponent(t.name) : "");
-  return { url: u, name: t.name || "" };
+  const value = { url: u, name: t.name || "" };
+  const ttl = Math.min(20 * 60, Math.max(60, (t.expires_in || 600) - 120)) * 1000;
+  tokenCache.set(key, { value, until: Date.now() + ttl });
+  if (tokenCache.size > 500) tokenCache.delete(tokenCache.keys().next().value);
+  return value;
 }
 
-async function file(params) {
+async function file(params, request, inline) {
   let upstreamUrl, name, referer;
   if (params.get("slug") && params.get("page")) {
     const pageUrl = requireHttpUrl(params.get("page"));
@@ -394,19 +419,27 @@ async function file(params) {
     referer = params.get("ref") || u.origin + "/";
   }
 
-  const up = await get(upstreamUrl, { headers: { "user-agent": UA, referer }, redirect: "follow" }, "the file server");
-  if (!up.ok || !up.body) {
-    return json({ error: "The file server answered with HTTP " + up.status + "." }, 502);
+  // Pass the player's byte-range request through so videos can play and seek.
+  const upHeaders = { "user-agent": UA, referer };
+  const range = request && request.headers.get("range");
+  if (range && /^bytes=\d*-\d*$/.test(range)) upHeaders.range = range;
+  const method = request && request.method === "HEAD" ? "HEAD" : "GET";
+  const up = await get(upstreamUrl, { method, headers: upHeaders, redirect: "follow" }, "the file server");
+  if (!(up.ok || up.status === 206) || (method === "GET" && !up.body)) {
+    return new Response("The file server answered with HTTP " + up.status + ".", { status: 502 });
   }
   const headers = new Headers({
     "content-type": up.headers.get("content-type") || "application/octet-stream",
-    "content-disposition": contentDisposition(name),
-    "cache-control": "no-store",
+    "content-disposition": contentDisposition(name, inline),
+    "cache-control": "private, max-age=3600",
     "x-content-type-options": "nosniff",
   });
-  const len = up.headers.get("content-length");
-  if (len) headers.set("content-length", len);
-  return new Response(up.body, { status: 200, headers });
+  for (const h of ["content-length", "content-range", "accept-ranges", "last-modified", "etag"]) {
+    const v = up.headers.get(h);
+    if (v) headers.set(h, v);
+  }
+  if (!headers.has("accept-ranges")) headers.set("accept-ranges", "bytes");
+  return new Response(method === "HEAD" ? null : up.body, { status: up.status === 206 ? 206 : 200, headers });
 }
 
 // ---------------------------------------------------------------- login lock
