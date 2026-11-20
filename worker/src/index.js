@@ -8,6 +8,11 @@
  *       url=…&name=…&ref=… a direct file link
  *       page=…&slug=…      a file page with a token download button
  *
+ *   GET /dl/<signed>/<name> download one file found by a scan. These links are
+ *                          signed with SIGNING_KEY and expire, so they work in
+ *                          a browser's download manager (which has no login
+ *                          cookie) without opening the helper to anyone else.
+ *
  * The API only answers requests that carry a valid Cloudflare Access login
  * (set ACCESS_TEAM and ACCESS_AUD). Without them it refuses to work, so the
  * helper can never be used by strangers as an open downloader.
@@ -26,6 +31,15 @@ const MAX_PAGES = 50;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/dl/")) {
+      try {
+        const params = await verifyLink(url.pathname, env);
+        if (!params) return new Response("This download link is invalid or has expired. Search again for a fresh one.", { status: 403 });
+        return await file(params);
+      } catch (e) {
+        return new Response("Download failed: " + (e && e.message ? e.message : String(e)), { status: (e && e.status) || 502 });
+      }
+    }
     if (!url.pathname.startsWith("/api/")) {
       if (url.pathname !== "/" && url.pathname !== "/index.html") return new Response("Not found", { status: 404 });
       return new Response(PAGE, {
@@ -45,9 +59,10 @@ export default {
     try {
       if (url.pathname === "/api/whoami") return json({ email: who.email || null });
       if (url.pathname === "/api/scan") {
-        return json(await scan(url.searchParams.get("url"), url.searchParams.get("all") === "1"));
+        const result = await scan(url.searchParams.get("url"), url.searchParams.get("all") === "1");
+        await signItems(result.items, env);
+        return json(result);
       }
-      if (url.pathname === "/api/file") return await file(url.searchParams);
       return json({ error: "Not found" }, 404);
     } catch (e) {
       return json({ error: e && e.message ? e.message : String(e) }, (e && e.status) || 502);
@@ -151,10 +166,52 @@ async function fetchPage(u) {
   return { html: await r.text(), finalUrl: new URL(r.url || u.href) };
 }
 
+// Scan results carry the download parameters; signItems turns them into
+// signed, expiring /dl/ links before they leave the helper.
 function fileLink(params) {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
-  return "/api/file?" + q.toString();
+  const out = {};
+  for (const [k, v] of Object.entries(params)) if (v) out[k] = v;
+  return out;
+}
+
+const LINK_TTL_SECONDS = 6 * 3600;
+
+function bytesToB64url(bytes) {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function hmacKey(env) {
+  if (!env.SIGNING_KEY || env.SIGNING_KEY.length < 32) throw new Error("The download signing key isn't set up.");
+  return crypto.subtle.importKey("raw", new TextEncoder().encode(env.SIGNING_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+}
+
+function safeFileName(name) {
+  return String(name || "file").replace(/[\/\\?#%\r\n"]/g, "_").slice(0, 150) || "file";
+}
+
+async function signItems(items, env) {
+  const key = await hmacKey(env);
+  const exp = Math.floor(Date.now() / 1000) + LINK_TTL_SECONDS;
+  for (const it of items) {
+    if (!it.dl || typeof it.dl !== "object") continue;
+    const payload = bytesToB64url(new TextEncoder().encode(JSON.stringify({ ...it.dl, exp })));
+    const sig = bytesToB64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload))));
+    it.dl = "/dl/" + payload + "." + sig + "/" + encodeURIComponent(safeFileName(it.name));
+  }
+}
+
+async function verifyLink(pathname, env) {
+  const m = pathname.match(/^\/dl\/([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)(?:\/|$)/);
+  if (!m) return null;
+  const key = await hmacKey(env);
+  const ok = await crypto.subtle.verify("HMAC", key, b64urlToBytes(m[2]), new TextEncoder().encode(m[1]));
+  if (!ok) return null;
+  const data = JSON.parse(new TextDecoder().decode(b64urlToBytes(m[1])));
+  if (!data.exp || data.exp < Date.now() / 1000) return null;
+  delete data.exp;
+  return new URLSearchParams(data);
 }
 
 // ---------------------------------------------------------------- scanning
@@ -214,13 +271,13 @@ async function scanFolder(html, base, all, title) {
   let items = readFolderItems(html, base);
   const total = parseInt((html.match(/id="loadAllPagesBtn"[^>]*data-total="(\d+)"/) || html.match(/data-total="(\d+)"[^>]*id="loadAllPagesBtn"/) || [])[1] || "1", 10);
   if (all && total > 1) {
-    const seen = new Set(items.map((i) => i.dl));
+    const seen = new Set(items.map((i) => i.source));
     for (let p = 2; p <= Math.min(total, MAX_PAGES) && items.length < MAX_ITEMS; p++) {
       const u = new URL(base.origin + base.pathname);
       u.searchParams.set("page", String(p));
       const next = await fetchPage(u);
       for (const it of readFolderItems(next.html, base)) {
-        if (!seen.has(it.dl)) { seen.add(it.dl); items.push(it); }
+        if (!seen.has(it.source)) { seen.add(it.source); items.push(it); }
       }
     }
   }

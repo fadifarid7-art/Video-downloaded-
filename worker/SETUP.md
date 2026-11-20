@@ -9,6 +9,11 @@ Live at **https://video-downloader.vdl-4gqjz4.workers.dev**. Only the email on t
 - Access application `video-downloader` for that address, policy **Only me** (the account's email).
 - Worker settings `ACCESS_TEAM` and `ACCESS_AUD` link the helper to that application. The helper checks every
   request's sign-in itself as well, so it refuses to work if the lock is ever removed.
+- Download links (`/dl/…`) skip the sign-in screen, because a browser's download manager doesn't carry the
+  sign-in cookie. Each link is signed with the Worker secret `SIGNING_KEY`, covers one file, and expires after
+  6 hours; the helper refuses any link it didn't sign. A second Access application,
+  `video-downloader signed downloads` (path `/dl`, policy *bypass*), lets these through.
+- To invalidate every download link at once, set a new `SIGNING_KEY`: `npx wrangler secret put SIGNING_KEY`.
 
 ## Let someone else in, or use a different email
 Cloudflare dashboard → **Zero Trust** → **Access** → **Applications** → `video-downloader` → **Policies** → **Only me**
