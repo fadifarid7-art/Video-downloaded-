@@ -101,6 +101,21 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
 /* file list */
 .list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.viewseg{display:flex;background:var(--raised);border-radius:999px;padding:3px;gap:2px;flex:none}
+.viewseg button{border:0;background:transparent;border-radius:999px;width:34px;height:30px;font-size:15px;color:var(--muted);padding:0}
+.viewseg button[aria-checked=true]{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.15)}
+/* grid view */
+.list.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr));gap:10px}
+.list.grid .item{flex-direction:column;align-items:stretch;gap:0;padding:0;overflow:hidden;position:relative}
+.list.grid .thumb{width:100%;height:auto;aspect-ratio:1/1;border-radius:0}
+.list.grid .thumb .glyph{font-size:34px}
+.list.grid .thumb .playbadge{width:28px;height:28px;font-size:12px;left:8px;bottom:8px;right:auto}
+.list.grid .info{padding:8px 10px 10px}
+.list.grid .name{font-size:13.5px}
+.list.grid .meta{font-size:12px}
+.list.grid .dlbtn{position:absolute;top:8px;right:8px;width:38px;height:38px;font-size:18px;background:rgba(10,14,20,.6);color:#fff;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.list.grid .item.done .dlbtn{background:rgba(19,131,74,.85);color:#fff}
+.list.grid .empty{grid-column:1/-1}
 .item{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px 8px 8px}
 .thumb{position:relative;width:64px;height:64px;flex:none;border-radius:9px;overflow:hidden;background:var(--raised);display:grid;place-items:center;border:0;padding:0}
 .thumb img,.thumb video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
@@ -192,6 +207,10 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     </div>
     <div class="bar">
       <div class="chips" id="chips" role="toolbar" aria-label="Filter"></div>
+      <div class="viewseg" role="radiogroup" aria-label="Layout">
+        <button type="button" role="radio" id="vList" aria-label="List view" title="List">☰</button>
+        <button type="button" role="radio" id="vGrid" aria-label="Grid view" title="Grid">▦</button>
+      </div>
     </div>
 
     <div class="action" id="action">
@@ -244,6 +263,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
   // ---------- state ----------
   var items = [], filter = "all", sortMode = store("vdl:sort") || "page";
+  var layout = store("vdl:layout") === "grid" ? "grid" : "list";
   var mode = store("vdl:mode") === "auto" ? "auto" : "manual";
   var speed = store("vdl:speed") || "wait";
   var started = {};         // download link -> true once sent to the browser
@@ -409,6 +429,9 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
   // ---------- filters / sort ----------
   $("sort").value = sortMode;
+  function setLayout(l) { layout = l; store("vdl:layout", l); render(); }
+  $("vList").addEventListener("click", function () { setLayout("list"); });
+  $("vGrid").addEventListener("click", function () { setLayout("grid"); });
   $("sort").addEventListener("change", function () { sortMode = $("sort").value; store("vdl:sort", sortMode); manualNext = -1; render(); });
 
   // ---------- mode switch + more ----------
@@ -471,6 +494,9 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
     // list
     var list = $("list"); list.textContent = "";
+    list.className = "list" + (layout === "grid" ? " grid" : "");
+    $("vList").setAttribute("aria-checked", String(layout === "list"));
+    $("vGrid").setAttribute("aria-checked", String(layout === "grid"));
     var s = shown();
     if (!s.length) { var e = document.createElement("li"); e.className = "empty"; e.textContent = "Nothing in this filter."; list.appendChild(e); return; }
     s.forEach(function (i) { list.appendChild(rowFor(i)); });
@@ -485,6 +511,10 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       var im = document.createElement("img"); im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; im.src = i.thumb;
       im.onerror = function () { im.remove(); glyph(th, i); };
       th.appendChild(im);
+    } else if (i.type === "images" && i.dl) {
+      var pim = document.createElement("img"); pim.alt = ""; pim.loading = "lazy"; pim.decoding = "async"; pim.src = viewUrl(i);
+      pim.onerror = function () { pim.remove(); glyph(th, i); };
+      th.appendChild(pim);
     } else if (i.type === "videos" && i.dl) {
       th.dataset.preview = viewUrl(i);   // filled in with the first frame when it scrolls into view
       glyph(th, i);
