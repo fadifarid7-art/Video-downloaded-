@@ -36,6 +36,9 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
 /* search */
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px;display:flex;flex-direction:column;gap:10px}
+.urlwrap{position:relative}
+.clearx{position:absolute;top:8px;right:8px;width:30px;height:30px;border-radius:50%;border:0;background:var(--raised);color:var(--muted);font-size:20px;line-height:1;display:grid;place-items:center;padding:0}
+#url{padding-right:44px!important}
 #url{width:100%;min-height:52px;resize:vertical;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:12px;font-size:16px;line-height:1.35}
 #url::placeholder{color:var(--muted)}
 .row2{display:flex;gap:8px}
@@ -143,7 +146,10 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   <h1>Downloader</h1>
 
   <form class="card" id="form" autocomplete="off">
-    <textarea id="url" rows="2" placeholder="Paste a link, or several (one per line)" autocapitalize="off" spellcheck="false" aria-label="Links" required></textarea>
+    <div class="urlwrap">
+      <textarea id="url" rows="2" placeholder="Paste a link, or several (one per line)" autocapitalize="off" spellcheck="false" aria-label="Links" required></textarea>
+      <button type="button" class="clearx" id="clearx" aria-label="Clear" hidden>×</button>
+    </div>
     <div class="recent" id="recent" hidden><div class="rlabel">Recent</div><div class="rlist" id="rlist"></div></div>
     <div class="row2">
       <button type="button" class="btn" id="paste">Paste</button>
@@ -298,7 +304,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       var h = document.createElement("span"); h.className = "rhost"; h.textContent = d.host;
       var pth = document.createElement("span"); pth.className = "rpath"; pth.textContent = d.path;
       b.appendChild(h); b.appendChild(pth);
-      b.addEventListener("click", function () { $("url").value = raw; runSearch(); });
+      b.addEventListener("click", function () { $("url").value = raw; syncClear(); runSearch(); });
       box.appendChild(b);
     });
   }
@@ -311,21 +317,28 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   function expand(clear) {
     $("searched").hidden = true; $("form").hidden = false;
     if (clear) { $("url").value = ""; $("pw").value = ""; $("pw").hidden = true; }
+    syncClear();
     renderRecent(); $("url").focus();
   }
   $("newlink").addEventListener("click", function () { expand(true); status(""); });
-  $("again").addEventListener("click", function () { $("url").value = lastRaw; runSearch(); });
-  $("url").addEventListener("input", renderRecent);
+  $("again").addEventListener("click", function () { $("url").value = lastRaw; syncClear(); runSearch(); });
+  function syncClear() { $("clearx").hidden = !$("url").value; }
+  $("url").addEventListener("input", function () { syncClear(); renderRecent(); });
+  $("clearx").addEventListener("click", function () {
+    $("url").value = ""; $("pw").value = ""; $("pw").hidden = true;
+    syncClear(); renderRecent(); status(""); $("url").focus();
+  });
   renderRecent();
 
   // Paste: into an empty box, a pasted link searches straight away.
   $("paste").addEventListener("click", function () {
     if (!navigator.clipboard || !navigator.clipboard.readText) { status("Long-press the box and choose Paste.", "warn"); return; }
     navigator.clipboard.readText().then(function (t) {
-      t = (t || "").trim(); var cur = $("url").value.trim();
-      $("url").value = cur && t && cur.indexOf(t) < 0 ? cur + "\n" + t : (t || cur);
-      renderRecent();
-      if (!cur && /https?:\/\//.test(t)) runSearch();
+      t = (t || "").trim();
+      if (!t) { status("Your clipboard is empty. Copy a link first.", "warn"); return; }
+      $("url").value = t;            // replace what was there
+      syncClear(); renderRecent();
+      if (/https?:\/\//.test(t)) runSearch();
     }, function () { status("Long-press the box and choose Paste.", "warn"); });
   });
 
