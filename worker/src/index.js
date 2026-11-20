@@ -1,7 +1,7 @@
 /*
  * Video Downloader helper (Cloudflare Worker).
  *
- *   GET /                  the page (served from public/)
+ *   GET /                  the page (public/index.html, built into the Worker)
  *   GET /api/scan?url=…    read a page and list the videos and images on it
  *       &all=1             on folder pages, also read every further page
  *   GET /api/file?…        stream one file back marked as a download
@@ -12,6 +12,8 @@
  * (set ACCESS_TEAM and ACCESS_AUD). Without them it refuses to work, so the
  * helper can never be used by strangers as an open downloader.
  */
+
+import PAGE from "../public/index.html";
 
 const VIDEO_EXT = ["mp4", "webm", "mov", "m4v", "mkv", "avi", "wmv", "flv"];
 const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "avif"];
@@ -24,7 +26,18 @@ const MAX_PAGES = 50;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    if (!url.pathname.startsWith("/api/")) {
+      if (url.pathname !== "/" && url.pathname !== "/index.html") return new Response("Not found", { status: 404 });
+      return new Response(PAGE, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+          "referrer-policy": "no-referrer",
+          "x-frame-options": "DENY",
+          "x-robots-tag": "noindex, nofollow",
+        },
+      });
+    }
 
     const who = await checkAccess(request, env);
     if (!who.ok) return json({ error: who.message, code: "locked" }, 401);

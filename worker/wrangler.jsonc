@@ -3,8 +3,11 @@
   "name": "video-downloader",
   "main": "src/index.js",
   "compatibility_date": "2025-06-01",
-  "assets": { "directory": "./public", "binding": "ASSETS" },
+  // The page is built into the Worker as text (no separate asset upload)
+  "rules": [{ "type": "Text", "globs": ["**/*.html"], "fallthrough": false }],
   "workers_dev": true,
+  // No preview addresses: they would sit outside the login lock
+  "preview_urls": false,
   // Keep the variables set in the dashboard when GitHub pushes a new version
   "keep_vars": true,
   "observability": { "enabled": true }
