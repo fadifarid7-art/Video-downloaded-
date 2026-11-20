@@ -5,147 +5,212 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<title>Video Downloader</title>
+<meta name="theme-color" content="#0e1218" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
+<title>Downloader</title>
 <style>
-:root{--bg:#f3f5f8;--surface:#fff;--line:#dde2ea;--fg:#18202c;--muted:#5c6778;--accent:#2456d6;--accent-ink:#fff;--video:#7a3fd1;--image:#0f7f6c;--ok:#15803d;--warn:#b45309;--err:#c2410c}
-@media (prefers-color-scheme:dark){:root{--bg:#0f141b;--surface:#171e28;--line:#283242;--fg:#e6ebf2;--muted:#93a0b3;--accent:#6f95ff;--accent-ink:#0b1220;--video:#b48cff;--image:#4fd1b5;--ok:#4ade80;--warn:#fbbf24;--err:#fb923c;color-scheme:dark}}
+/* Layout: one narrow column. Search card, then results with a single main action,
+   then a compact file list. Progress lives in a slim strip pinned to the top. */
+:root{
+  --bg:#f4f6f9; --surface:#ffffff; --raised:#eef1f6; --line:#dfe4ec; --fg:#141a24; --muted:#5d687a;
+  --accent:#2f5bea; --accent-ink:#ffffff; --accent-soft:#e6ecfd;
+  --video:#7c4ddb; --image:#0f8a74; --ok:#13834a; --warn:#b45309; --err:#c2410c;
+  --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.05),0 6px 20px rgba(16,24,40,.06);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0e1218; --surface:#161c25; --raised:#1d2531; --line:#263142; --fg:#e8edf4; --muted:#93a0b4;
+  --accent:#6f93ff; --accent-ink:#0b1220; --accent-soft:#1c2747;
+  --video:#b38cff; --image:#45d0b0; --ok:#4ade80; --warn:#fbbf24; --err:#fb923c;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.3); color-scheme:dark;
+}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-.wrap{max-width:760px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(40px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
-h1{font-size:1.5rem;margin:0 0 4px}
-.lead{color:var(--muted);margin:0 0 16px;font-size:15px}
-form{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px}
-.inrow{display:flex;gap:8px}
-#url{flex:1;min-width:0;resize:vertical;min-height:46px;line-height:1.35;font:inherit;font-size:16px;padding:11px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
-.btn{font:inherit;font-weight:600;font-size:15px;border-radius:8px;padding:11px 16px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--fg);text-decoration:none;display:inline-block;text-align:center}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 var(--font);-webkit-text-size-adjust:100%}
+button,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+button:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+
+.wrap{max-width:680px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 18px) max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 40px) max(16px,env(safe-area-inset-left,0px))}
+h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
+
+/* search */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px;display:flex;flex-direction:column;gap:10px}
+#url{width:100%;min-height:52px;resize:vertical;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:12px;font-size:16px;line-height:1.35}
+#url::placeholder{color:var(--muted)}
+.row2{display:flex;gap:8px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 16px;font-size:16px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;color:var(--fg)}
 .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-.btn.go{background:var(--ok);color:#0b1220;border-color:var(--ok)}
+.btn.grow{flex:1}
 .btn:disabled{opacity:.5;cursor:default}
-.btn.save{background:var(--image);color:#fff;border-color:var(--image)}
-.speed{font:inherit;font-size:14px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
-.done{color:var(--ok);font-weight:600}
-.row.isdone{opacity:.8}
-.runbar{position:fixed;left:0;right:0;top:0;z-index:40;background:#2456d6;color:#fff;padding:calc(env(safe-area-inset-top,0px) + 12px) max(16px,env(safe-area-inset-right,0px)) 12px max(16px,env(safe-area-inset-left,0px));box-shadow:0 4px 18px rgba(0,0,0,.35)}
-.runbar.done{background:#15803d}
-.rbrow{display:flex;align-items:center;gap:12px}
-.rbcount{font-size:30px;font-weight:800;letter-spacing:-.01em;flex:1;font-variant-numeric:tabular-nums}
-.rbstop{font:inherit;font-weight:700;font-size:16px;background:#fff;color:#0b1220;border:0;border-radius:10px;padding:10px 16px;cursor:pointer}
-.rbnote{font-size:15px;margin-top:4px;opacity:.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rbtrack{height:8px;background:rgba(255,255,255,.3);border-radius:4px;overflow:hidden;margin-top:10px}
-.rbtrack>i{display:block;height:100%;width:0;background:#fff;transition:width .3s}
-label.auto{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);padding:0 4px}
-.progress{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:-2px 0 10px}
-.progress>i{display:block;height:100%;width:0;background:var(--image);transition:width .2s}
-label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--muted)}
-.status{margin:12px 2px;font-size:14px;color:var(--muted);min-height:1.3em}
+.opt{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.opt input{width:18px;height:18px;accent-color:var(--accent)}
+.status{margin:12px 2px 0;font-size:14px;color:var(--muted);min-height:1.2em}
 .status.ok{color:var(--ok)}.status.warn{color:var(--warn)}.status.err{color:var(--err)}
-.results[hidden]{display:none}
-.rhead{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 10px}
-.rtitle{font-weight:600;flex:1 1 100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chip{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--surface);color:var(--fg);padding:6px 12px;border-radius:999px;cursor:pointer}
+
+/* results */
+.results{margin-top:20px}
+.rhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.rtext{flex:1;min-width:0}
+.rtitle{font-size:17px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rsum{font-size:13px;color:var(--muted);margin-top:1px}
+.bar{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.chips{display:flex;gap:6px;overflow-x:auto;flex:1;min-width:0;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:14px;white-space:nowrap}
 .chip[aria-pressed=true]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
-.tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-.list{display:flex;flex-direction:column;gap:8px}
-.row{display:flex;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px}
-.th{width:56px;height:56px;border-radius:6px;background:var(--line);flex:none;overflow:hidden;display:grid;place-items:center;color:var(--muted);font-size:11px}
-.th img{width:100%;height:100%;object-fit:cover;display:block}
-.meta{flex:1;min-width:0}
-.nm{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sub{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center}
-.tag{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;padding:1px 5px;border-radius:4px;color:#fff;font-weight:600}
-.tag.videos{background:var(--video)}.tag.images{background:var(--image)}.tag.streams,.tag.other{background:var(--muted)}
-.dl{background:var(--accent);color:var(--accent-ink);text-decoration:none;font-weight:600;font-size:14px;padding:8px 12px;border-radius:8px;flex:none}
-.dl.off{background:var(--line);color:var(--muted);pointer-events:none}
+.sort{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 10px;font-size:14px;flex:none;max-width:48%}
+
+/* main action */
+.action{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px;display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.arow{display:flex;gap:8px;align-items:stretch}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--raised);border-radius:10px;padding:3px;gap:3px}
+.seg button{border:0;background:transparent;border-radius:8px;padding:8px 6px;font-size:14px;font-weight:600;color:var(--muted)}
+.seg button[aria-checked=true]{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.hint{font-size:13px;color:var(--muted);margin:0 2px}
+.iconbtn{width:48px;flex:none;padding:0;font-size:20px;line-height:1}
+.more{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px}
+.more label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:15px}
+.more select{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:6px 8px;font-size:14px}
+.linkbtn{border:0;background:none;padding:6px 0;text-align:left;font-size:15px;color:var(--accent);font-weight:600}
+
+/* file list */
+.list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.item{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px 8px 8px}
+.thumb{position:relative;width:64px;height:64px;flex:none;border-radius:9px;overflow:hidden;background:var(--raised);display:grid;place-items:center;border:0;padding:0}
+.thumb img,.thumb video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.thumb .glyph{color:var(--muted);font-size:22px}
+.thumb .playbadge{position:absolute;right:4px;bottom:4px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:10px;padding-left:2px}
+.info{flex:1;min-width:0;background:none;border:0;padding:0;text-align:left}
+.name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center;margin-top:2px;flex-wrap:wrap}
+.kind{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.kind.videos{color:var(--video)}.kind.images{color:var(--image)}
+.sent{color:var(--ok);font-weight:600}
+.dlbtn{width:42px;height:42px;flex:none;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;text-decoration:none;font-size:20px;font-weight:700}
+.dlbtn.off{background:var(--raised);color:var(--muted);font-size:11px;font-weight:600;pointer-events:none}
+.item.done .dlbtn{background:var(--raised);color:var(--ok)}
 .empty{color:var(--muted);font-size:14px;padding:6px 2px}
-.help{margin-top:28px;font-size:13.5px;color:var(--muted)}
-.sortbox{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);margin-left:auto}
-.sortbox select{font:inherit;font-size:14px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
-.th,.meta{cursor:pointer}
-.th{position:relative}
-.play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:20px;text-shadow:0 1px 4px rgba(0,0,0,.6)}
-.viewer[hidden]{display:none}
-.viewer{position:fixed;inset:0;z-index:50;background:rgba(5,8,14,.9);display:flex;align-items:center;justify-content:center;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
-.vpanel{width:100%;max-width:900px;max-height:100%;display:flex;flex-direction:column;gap:10px}
-.vmedia{background:#000;border-radius:10px;overflow:hidden;display:grid;place-items:center;min-height:120px}
-.vmedia video,.vmedia img{max-width:100%;max-height:72vh;display:block}
-.vbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.vname{color:#e6ebf2;font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.vbtn{font:inherit;font-weight:600;font-size:15px;border-radius:8px;padding:10px 14px;border:0;cursor:pointer;text-decoration:none}
-.vbtn.dlb{background:#6f95ff;color:#0b1220}.vbtn.nav{background:#283242;color:#e6ebf2}.vbtn:disabled{opacity:.4}
-.help b{color:var(--fg)}
+
+/* progress strip */
+.strip{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);z-index:40;width:min(680px,calc(100% - 24px));background:var(--fg);color:var(--bg);border-radius:14px;padding:10px 12px;box-shadow:0 8px 28px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:6px;transition:opacity .3s}
+.strip .srow{display:flex;align-items:center;gap:10px}
+.strip .count{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}
+.strip .note{flex:1;min-width:0;font-size:13px;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.strip button{border:0;background:var(--bg);color:var(--fg);border-radius:8px;padding:6px 12px;font-size:14px;font-weight:700}
+.strip .track{height:4px;background:rgba(127,127,127,.35);border-radius:2px;overflow:hidden}
+.strip .track i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.strip.done .count{color:var(--ok)}
+.strip.fade{opacity:0}
+
+/* viewer */
+.viewer{position:fixed;inset:0;z-index:50;background:rgba(4,6,10,.94);display:flex;flex-direction:column;justify-content:center;padding:calc(env(safe-area-inset-top,0px) + 12px) max(12px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 12px) max(12px,env(safe-area-inset-left,0px));gap:12px}
+.vmedia{flex:1;min-height:0;display:grid;place-items:center}
+.vmedia video,.vmedia img{max-width:100%;max-height:100%;border-radius:10px;display:block}
+.vmsg{color:#e8edf4;font-size:15px;text-align:center;padding:20px}
+.vbar{display:flex;align-items:center;gap:8px;max-width:680px;width:100%;margin:0 auto}
+.vname{flex:1;min-width:0;color:#e8edf4;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
+.vbtn{border:0;border-radius:10px;padding:11px 14px;font-size:15px;font-weight:700;background:#263142;color:#e8edf4;text-decoration:none}
+.vbtn.go{background:#6f93ff;color:#0b1220}
+.vbtn:disabled{opacity:.35}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
-<div class="runbar" id="runbar" hidden role="status" aria-live="polite">
-  <div class="rbrow"><div class="rbcount" id="rbcount">0 / 0</div><button type="button" class="rbstop" id="rbstop">Stop</button></div>
-  <div class="rbnote" id="rbnote"></div>
-  <div class="rbtrack"><i id="rbbar"></i></div>
-</div>
-<div class="wrap">
-  <h1>Video Downloader</h1>
-  <p class="lead">Paste a link to a page, a file or a folder, or several links, one per line. You'll get a list of its videos and images with download buttons.</p>
 
-  <form id="form">
-    <div class="inrow">
-      <textarea id="url" rows="2" placeholder="https://…  (one link per line for several)" autocomplete="off" autocapitalize="off" spellcheck="false" required></textarea>
+<div class="strip" id="strip" hidden role="status" aria-live="polite">
+  <div class="srow"><span class="count" id="scount">0 / 0</span><span class="note" id="snote"></span><button type="button" id="sstop">Stop</button></div>
+  <div class="track"><i id="sbar"></i></div>
+</div>
+
+<main class="wrap">
+  <h1>Downloader</h1>
+
+  <form class="card" id="form" autocomplete="off">
+    <textarea id="url" rows="2" placeholder="Paste a link, or several (one per line)" autocapitalize="off" spellcheck="false" aria-label="Links" required></textarea>
+    <div class="row2">
       <button type="button" class="btn" id="paste">Paste</button>
+      <button type="submit" class="btn primary grow" id="scan">Find files</button>
     </div>
-    <label class="opt"><input type="checkbox" id="all" checked> On folders, include every page</label>
-    <button class="btn primary" id="scan" type="submit">Find videos and images</button>
+    <label class="opt"><input type="checkbox" id="all" checked> Include every page of a folder</label>
   </form>
 
-  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
 
   <section class="results" id="results" hidden>
     <div class="rhead">
-      <div class="rtitle" id="rtitle"></div>
-      <div id="chips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-      <label class="sortbox">Sort
-        <select id="sort">
-          <option value="page">As on page</option>
-          <option value="small">Smallest first</option>
-          <option value="large">Largest first</option>
-          <option value="name">Name A–Z</option>
-        </select>
-      </label>
+      <div class="rtext"><div class="rtitle" id="rtitle"></div><div class="rsum" id="rsum"></div></div>
+      <select class="sort" id="sort" aria-label="Sort">
+        <option value="page">As on page</option>
+        <option value="small">Smallest first</option>
+        <option value="large">Largest first</option>
+        <option value="name">Name A–Z</option>
+      </select>
     </div>
-    <div class="tools" id="tools"></div>
-    <div class="progress" id="prog" hidden><i id="progbar"></i></div>
-    <div class="list" id="list"></div>
+    <div class="bar">
+      <div class="chips" id="chips" role="toolbar" aria-label="Filter"></div>
+    </div>
+
+    <div class="action" id="action">
+      <div class="arow">
+        <button type="button" class="btn primary grow" id="dlall">Download all</button>
+        <button type="button" class="btn iconbtn" id="morebtn" aria-expanded="false" aria-controls="more" aria-label="More options">⋯</button>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="How to download">
+        <button type="button" role="radio" id="mManual" aria-checked="true">One at a time</button>
+        <button type="button" role="radio" id="mAuto" aria-checked="false">Automatic</button>
+      </div>
+      <p class="hint" id="hint"></p>
+      <div class="more" id="more" hidden>
+        <label>Automatic speed
+          <select id="speed">
+            <option value="wait">After each save</option>
+            <option value="3000">One every 3 s</option>
+            <option value="1000">One per second</option>
+            <option value="300">All at once</option>
+          </select>
+        </label>
+        <button type="button" class="linkbtn" id="shareAll" hidden>Save all to a folder (Safari)</button>
+        <button type="button" class="linkbtn" id="copyLinks">Copy original links</button>
+        <button type="button" class="linkbtn" id="startOver" hidden>Start over</button>
+      </div>
+    </div>
+
+    <ul class="list" id="list"></ul>
   </section>
+</main>
 
-  <div class="viewer" id="viewer" hidden>
-    <div class="vpanel" role="dialog" aria-modal="true" aria-labelledby="vname">
-      <div class="vmedia" id="vmedia"></div>
-      <div class="vbar">
-        <button type="button" class="vbtn nav" id="vprev" aria-label="Previous">‹</button>
-        <div class="vname" id="vname"></div>
-        <button type="button" class="vbtn nav" id="vnext" aria-label="Next">›</button>
-      </div>
-      <div class="vbar">
-        <a class="vbtn dlb" id="vdl" href="#">Download</a>
-        <button type="button" class="vbtn nav" id="vclose">Close</button>
-      </div>
-    </div>
+<div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-labelledby="vname">
+  <div class="vmedia" id="vmedia"></div>
+  <div class="vbar">
+    <button type="button" class="vbtn" id="vprev" aria-label="Previous">‹</button>
+    <div class="vname" id="vname"></div>
+    <button type="button" class="vbtn" id="vnext" aria-label="Next">›</button>
   </div>
-
-  <p class="help"><b>Tip:</b> tap a file's picture or name to watch it here. Each Download opens your browser's own download menu, where you pick where to save. <b>Download all</b> starts the next file each time you tap it (iPhones allow one download per tap).</p>
+  <div class="vbar">
+    <a class="vbtn go" id="vdl" href="#" style="flex:1;text-align:center">Download</a>
+    <button type="button" class="vbtn" id="vclose">Close</button>
+  </div>
 </div>
 
 <script>
 (function () {
+  "use strict";
   var $ = function (id) { return document.getElementById(id); };
-  var items = [], filter = "all", queuePos = 0, sortMode = "page", viewList = [], viewPos = 0;
-  try { sortMode = localStorage.getItem("vdl:sort") || "page"; } catch (e) {}
-  $("sort").value = sortMode;
-  $("sort").addEventListener("change", function () {
-    sortMode = $("sort").value; queuePos = 0;
-    try { localStorage.setItem("vdl:sort", sortMode); } catch (e) {}
-    render();
-  });
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
 
+  // ---------- state ----------
+  var items = [], filter = "all", sortMode = store("vdl:sort") || "page";
+  var mode = store("vdl:mode") === "auto" ? "auto" : "manual";
+  var speed = store("vdl:speed") || "wait";
+  var started = {};         // download link -> true once sent to the browser
+  var manualNext = -1;      // index into the queue while stepping one at a time
+  var viewList = [], viewPos = 0;
+
+  // ---------- helpers ----------
   function status(t, k) { var s = $("status"); s.textContent = t || ""; s.className = "status" + (k ? " " + k : ""); }
   function fmt(b) { b = +b; if (!b) return ""; if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KB"; if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB"; return (b / 1073741824).toFixed(2) + " GB"; }
+  function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
   function shown() {
     var list = items.filter(function (i) { return filter === "all" || i.type === filter; });
     if (sortMode === "small" || sortMode === "large") {
@@ -153,7 +218,7 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
       list = list.slice().sort(function (a, b) {
         var x = +a.size || 0, y = +b.size || 0;
         if (!x && !y) return a.order - b.order;
-        if (!x) return 1; if (!y) return -1;   // unknown sizes go last
+        if (!x) return 1; if (!y) return -1;
         return (x - y) * dir || a.order - b.order;
       });
     } else if (sortMode === "name") {
@@ -161,379 +226,345 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
     }
     return list;
   }
-  function downloadable() { return shown().filter(function (i) { return i.dl; }); }
+  function queue() { return shown().filter(function (i) { return i.dl; }); }
+  function remaining() { return queue().filter(function (i) { return !started[i.dl]; }); }
+  function summary() {
+    var c = {}; items.forEach(function (i) { c[i.type] = (c[i.type] || 0) + 1; });
+    var p = [];
+    if (c.videos) p.push(plural(c.videos, "video"));
+    if (c.images) p.push(plural(c.images, "image"));
+    if (c.streams) p.push(plural(c.streams, "stream") + " (not supported)");
+    if (c.other) p.push(plural(c.other, "other file"));
+    return p.join(" · ");
+  }
+  function viewUrl(i) { return i.dl + (i.dl.indexOf("?") < 0 ? "?" : "&") + "view=1"; }
+  function send(i) {
+    started[i.dl] = true;
+    var f = document.createElement("iframe"); f.style.display = "none"; f.src = i.dl; document.body.appendChild(f);
+    setTimeout(function () { f.remove(); }, 120000);
+  }
 
-  try { var last = localStorage.getItem("vdl:last"); if (last) $("url").value = last; } catch (e) {}
-
+  // ---------- search ----------
+  $("url").value = store("vdl:last") || "";
   $("paste").addEventListener("click", function () {
-    if (!navigator.clipboard || !navigator.clipboard.readText) { status("Your browser won't let the page read the clipboard. Long-press the box and choose Paste.", "warn"); return; }
+    if (!navigator.clipboard || !navigator.clipboard.readText) { status("Long-press the box and choose Paste.", "warn"); return; }
     navigator.clipboard.readText().then(function (t) {
       t = (t || "").trim(); var cur = $("url").value.trim();
-      $("url").value = cur && t && cur.indexOf(t) < 0 ? cur + "\n" + t : (t || cur); $("url").focus();
-    },
-      function () { status("Clipboard access was blocked. Long-press the box and choose Paste.", "warn"); });
+      $("url").value = cur && t && cur.indexOf(t) < 0 ? cur + "\n" + t : (t || cur);
+    }, function () { status("Long-press the box and choose Paste.", "warn"); });
   });
 
   $("form").addEventListener("submit", function (e) {
     e.preventDefault();
     var raw = $("url").value.trim();
-    if (!raw) return;
     var links = (raw.match(/https?:\/\/[^\s<>"']+/g) || []).filter(function (l, n, a) { return a.indexOf(l) === n; });
-    if (!links.length) { status("That doesn't look like a web link. Paste the full address, starting with https://", "err"); return; }
-    try { localStorage.setItem("vdl:last", raw); } catch (er) {}
-    $("scan").disabled = true;
-    $("results").hidden = true;
-    stopAuto(); resetBatch(); started = {};
+    if (!links.length) { status("Paste a full link, starting with https://", "err"); return; }
+    store("vdl:last", raw);
+    stopAuto(true); started = {}; manualNext = -1;
+    $("scan").disabled = true; $("results").hidden = true;
     var found = [], failed = [], title = "", n = 0;
-    function scanOne() {
+    function next() {
       if (n >= links.length) return Promise.resolve();
       var u = links[n++];
-      status("Reading " + (links.length > 1 ? "link " + n + " of " + links.length : "the page") + "…");
+      status(links.length > 1 ? "Reading link " + n + " of " + links.length + "…" : "Reading the page…");
       return fetch("/api/scan?url=" + encodeURIComponent(u) + ($("all").checked ? "&all=1" : ""), { credentials: "same-origin" })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }, function () { return { ok: false, d: { error: "Unexpected answer (HTTP " + r.status + ")." } }; }); })
         .then(function (res) {
-          if (!res.ok) { failed.push(u + ": " + (res.d.error || "error")); return; }
+          if (!res.ok) { failed.push(res.d.error || "error"); return; }
           if (!title) title = res.d.title || u;
           (res.d.items || []).forEach(function (it) { if (!found.some(function (f) { return f.source && f.source === it.source; })) found.push(it); });
-        }, function () { failed.push(u + ": couldn't reach the helper"); })
-        .then(scanOne);
+        }, function () { failed.push("couldn't reach the helper"); })
+        .then(next);
     }
-    scanOne().then(function () {
-      items = found.map(function (it, k) { it.order = k; return it; }); filter = "all"; queuePos = 0;
-      $("rtitle").textContent = links.length > 1 ? links.length + " links" : (title || links[0]);
+    next().then(function () {
+      items = found.map(function (it, k) { it.order = k; return it; }); filter = "all";
+      $("rtitle").textContent = links.length > 1 ? plural(links.length, "link") : (title.replace(/\s*\|\s*[^|]+$/, "") || links[0]);
+      $("rsum").textContent = summary();
       render();
       $("results").hidden = false;
-      var tail = failed.length ? " Couldn't read: " + failed.join("; ") : "";
-      if (!items.length) status((failed.length ? "Nothing found." : "No videos or images found on that page. Some sites load them only after you press play, which this can't see.") + tail, failed.length ? "err" : "warn");
-      else status("Found " + summary() + "." + tail, failed.length ? "warn" : "ok");
+      var tail = failed.length ? " Couldn't read " + plural(failed.length, "link") + ": " + failed.join("; ") : "";
+      if (!items.length) status((failed.length ? "Nothing found." : "No videos or images on that page. Some sites only load them after you press play.") + tail, failed.length ? "err" : "warn");
+      else status(tail.trim(), failed.length ? "warn" : "");
     }).then(function () { $("scan").disabled = false; });
   });
 
-  function summary() {
-    var c = {}; items.forEach(function (i) { c[i.type] = (c[i.type] || 0) + 1; });
-    var p = [];
-    if (c.videos) p.push(c.videos + " video" + (c.videos > 1 ? "s" : ""));
-    if (c.images) p.push(c.images + " image" + (c.images > 1 ? "s" : ""));
-    if (c.streams) p.push(c.streams + " stream" + (c.streams > 1 ? "s" : "") + " (not supported yet)");
-    if (c.other) p.push(c.other + " other file" + (c.other > 1 ? "s" : ""));
-    return p.join(", ");
-  }
+  // ---------- filters / sort ----------
+  $("sort").value = sortMode;
+  $("sort").addEventListener("change", function () { sortMode = $("sort").value; store("vdl:sort", sortMode); manualNext = -1; render(); });
 
+  // ---------- mode switch + more ----------
+  function setMode(m) { mode = m; store("vdl:mode", m); manualNext = -1; render(); }
+  $("mManual").addEventListener("click", function () { setMode("manual"); });
+  $("mAuto").addEventListener("click", function () { setMode("auto"); });
+  $("speed").value = speed;
+  $("speed").addEventListener("change", function () { speed = $("speed").value; store("vdl:speed", speed); render(); });
+  $("morebtn").addEventListener("click", function () {
+    var open = $("more").hidden; $("more").hidden = !open; $("morebtn").setAttribute("aria-expanded", String(open));
+  });
+  $("copyLinks").addEventListener("click", function () {
+    var text = shown().map(function (i) { return i.source || ""; }).filter(Boolean).join("\n");
+    if (!navigator.clipboard || !navigator.clipboard.writeText) { status("Copying isn't available here.", "warn"); return; }
+    navigator.clipboard.writeText(text).then(function () { status("Copied " + plural(text.split("\n").length, "link") + ".", "ok"); }, function () { status("Couldn't copy.", "warn"); });
+  });
+  $("startOver").addEventListener("click", function () { started = {}; manualNext = -1; render(); status(""); });
+
+  // ---------- render ----------
   function render() {
+    // chips
     var c = { all: items.length }; items.forEach(function (i) { c[i.type] = (c[i.type] || 0) + 1; });
     var chips = $("chips"); chips.textContent = "";
     [["all", "All"], ["videos", "Videos"], ["images", "Images"], ["streams", "Streams"], ["other", "Other"]].forEach(function (p) {
       if (p[0] !== "all" && !c[p[0]]) return;
+      if (p[0] === "all" && Object.keys(c).length <= 2) return; // only one kind: no need for "All"
       var b = document.createElement("button"); b.type = "button"; b.className = "chip";
-      b.setAttribute("aria-pressed", String(filter === p[0])); b.textContent = p[1] + " " + (c[p[0]] || 0);
-      b.addEventListener("click", function () { filter = p[0]; queuePos = 0; render(); });
+      b.setAttribute("aria-pressed", String(filter === p[0] || (p[0] !== "all" && Object.keys(c).length <= 2)));
+      b.textContent = p[1] + " " + c[p[0]];
+      b.addEventListener("click", function () { filter = p[0]; manualNext = -1; render(); });
       chips.appendChild(b);
     });
 
-    var tools = $("tools"); tools.textContent = "";
-    var q = downloadable();
-    function addBtn(cls, text, fn) {
-      var b = document.createElement("button"); b.type = "button"; b.className = "btn " + cls; b.textContent = text;
-      b.addEventListener("click", fn); tools.appendChild(b); return b;
-    }
-    if (q.length && CAN_SHARE) {
-      // Save all: one share sheet, one folder pick, real files
-      if (batch.ready && batch.key === listKey(q)) {
-        var g = batch.groups[batch.next];
-        addBtn("go", batch.groups.length > 1 ? "Save group " + (batch.next + 1) + " of " + batch.groups.length + " (" + g.length + " files)" : "Save " + g.length + " file" + (g.length > 1 ? "s" : "") + " now", shareGroup);
-        addBtn("", "Cancel", function () { resetBatch(); render(); status(""); });
-      } else {
-        var sb = addBtn("save", batch.loading ? "Loading… " + batch.done + " of " + batch.total : "Save all " + q.length + " to a folder", loadBatch);
-        sb.disabled = batch.loading;
-      }
-    }
-    if (q.length > 1) {
-      if (autoTimer) {
-        addBtn("go", "Stop (" + autoPos + " of " + autoTotal + " started)", function () { var n = autoPos; stopAuto(); status("Stopped after " + n + " of " + autoTotal + ". Files marked Started were already sent to your browser; cancel any of those in its downloads list. Tap \"Download the other …\" to carry on later.", "warn"); render(); });
-      } else {
-        if (queuePos >= q.length) queuePos = 0;
-        var remaining = q.filter(function (i) { return !started[i.dl]; }).length;
-        var someDone = remaining < q.length;
-        var label = queuePos ? "Next: " + (queuePos + 1) + " of " + q.length
-          : !remaining ? "Download all " + q.length + " again"
-          : someDone ? "Download the other " + remaining
-          : "Download all " + q.length;
-        var qb = addBtn(queuePos ? "go" : "primary", label, function () {
-          if (!queuePos && !remaining) { started = {}; render(); return; }
-          if ($("auto") && $("auto").checked && !queuePos) { startAuto(); return; }
-          if (!queuePos && someDone) {
-            // manual mode: jump to the first file not started yet
-            var all = downloadable();
-            for (var k = 0; k < all.length; k++) if (!started[all[k].dl]) { queuePos = k; break; }
-          }
-          var it = downloadable()[queuePos];
-          started[it.dl] = true;
-          location.href = it.dl;
-          status("Started " + it.name + " (" + (queuePos + 1) + " of " + q.length + "). Save it, then tap Next.", "ok");
-          queuePos++;
-          var all2 = downloadable();
-          while (queuePos < all2.length && started[all2[queuePos].dl]) queuePos++;   // skip files already started
-          if (queuePos >= q.length) { queuePos = 0; status("All " + q.length + " downloads started.", "ok"); }
-          render();
-        });
-        if (queuePos) addBtn("", "Restart", function () { queuePos = 0; render(); });
-        else {
-          if (someDone && remaining) addBtn("", "Start over", function () { started = {}; render(); status(""); });
-          var lab = document.createElement("label"); lab.className = "auto";
-          var cbx = document.createElement("input"); cbx.type = "checkbox"; cbx.id = "auto"; cbx.checked = autoPref;
-          cbx.addEventListener("change", function () { autoPref = cbx.checked; try { localStorage.setItem("vdl:auto", autoPref ? "1" : ""); } catch (e) {} });
-          lab.appendChild(cbx); lab.appendChild(document.createTextNode("Automatic"));
-          tools.appendChild(lab);
-          var sp = document.createElement("select"); sp.id = "speed"; sp.className = "speed"; sp.setAttribute("aria-label", "Automatic speed");
-          SPEEDS.forEach(function (o) { var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1]; sp.appendChild(op); });
-          sp.value = autoSpeed;
-          sp.addEventListener("change", function () { autoSpeed = sp.value; try { localStorage.setItem("vdl:speed", autoSpeed); } catch (e) {} });
-          tools.appendChild(sp);
-        }
-      }
-    }
-    if (shown().length) {
-      var cb = document.createElement("button"); cb.type = "button"; cb.className = "btn"; cb.textContent = "Copy original links";
-      cb.addEventListener("click", function () {
-        var text = shown().map(function (i) { return i.source || ""; }).filter(Boolean).join("\n");
-        var done = function () { cb.textContent = "Copied"; setTimeout(function () { cb.textContent = "Copy original links"; }, 1500); };
-        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { status("Couldn't copy.", "warn"); });
-      });
-      tools.appendChild(cb);
-    }
+    // main action
+    var q = queue(), left = remaining();
+    var running = !!autoTimer || autoActive;
+    $("action").hidden = !q.length;
+    $("mManual").setAttribute("aria-checked", String(mode === "manual"));
+    $("mAuto").setAttribute("aria-checked", String(mode === "auto"));
+    var btn = $("dlall");
+    btn.disabled = running;
+    if (running) btn.textContent = "Downloading…";
+    else if (mode === "manual" && manualNext >= 0) btn.textContent = "Next: " + (q.length - left.length + 1) + " of " + q.length;
+    else if (!left.length) btn.textContent = "Download all " + q.length + " again";
+    else if (left.length < q.length) btn.textContent = "Download the other " + left.length;
+    else btn.textContent = q.length === 1 ? "Download" : "Download all " + q.length;
+    $("startOver").hidden = left.length === q.length;
+    var spd = $("speed").options[$("speed").selectedIndex].text.toLowerCase();
+    $("hint").textContent = mode === "manual"
+      ? "Tap once per file. Your browser asks where to save each one."
+      : "Starts each file for you (" + spd + "). Save each one as your browser asks.";
+    $("shareAll").hidden = !CAN_SHARE;
 
+    // list
     var list = $("list"); list.textContent = "";
     var s = shown();
-    if (!s.length) { var e = document.createElement("div"); e.className = "empty"; e.textContent = "Nothing in this filter."; list.appendChild(e); return; }
-    s.forEach(function (i) {
-      var row = document.createElement("div"); row.className = "row";
-      var th = document.createElement("div"); th.className = "th";
-      var meta = document.createElement("div"); meta.className = "meta";
-      var canView = !!i.dl && (i.type === "videos" || i.type === "images");
-      if (canView) {
-        th.addEventListener("click", function () { openViewer(i); });
-        meta.addEventListener("click", function () { openViewer(i); });
-        th.title = meta.title = "Watch";
-      }
-      if (i.thumb) { var im = document.createElement("img"); im.src = i.thumb; im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; im.onerror = function () { im.remove(); th.textContent = i.type === "videos" ? "VIDEO" : "FILE"; }; th.appendChild(im); }
-      else th.textContent = i.type === "videos" ? "VIDEO" : i.type === "streams" ? "STREAM" : i.type === "images" ? "IMAGE" : "FILE";
-      if (canView && i.type === "videos") { var pl = document.createElement("span"); pl.className = "play"; pl.textContent = "▶"; th.appendChild(pl); }
-      var nm = document.createElement("div"); nm.className = "nm"; nm.textContent = i.name;
-      var sub = document.createElement("div"); sub.className = "sub";
-      var tag = document.createElement("span"); tag.className = "tag " + i.type;
-      tag.textContent = i.type === "videos" ? "video" : i.type === "images" ? "image" : i.type === "streams" ? "stream" : "file";
-      sub.appendChild(tag);
-      if (i.size) { var sz = document.createElement("span"); sz.textContent = fmt(i.size); sub.appendChild(sz); }
-      if (started[i.dl]) { var ok = document.createElement("span"); ok.className = "done"; ok.textContent = "✓ Started"; sub.appendChild(ok); row.classList.add("isdone"); }
-      meta.appendChild(nm); meta.appendChild(sub);
-      var a = document.createElement("a");
-      if (i.dl) { a.className = "dl"; a.href = i.dl; a.textContent = "Download"; a.setAttribute("download", i.name); a.addEventListener("click", function () { started[i.dl] = true; setTimeout(render, 50); }); }
-      else { a.className = "dl off"; a.textContent = "Stream"; a.title = "Streaming playlists aren't supported yet"; }
-      row.appendChild(th); row.appendChild(meta); row.appendChild(a);
-      list.appendChild(row);
-    });
+    if (!s.length) { var e = document.createElement("li"); e.className = "empty"; e.textContent = "Nothing in this filter."; list.appendChild(e); return; }
+    s.forEach(function (i) { list.appendChild(rowFor(i)); });
+    observeThumbs();
   }
 
-  // ---- Save all to a folder (share sheet) ----
-  var CAN_SHARE = (function () {
-    try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [new File(["x"], "t.jpg", { type: "image/jpeg" })] })); }
-    catch (e) { return false; }
-  })();
-  var GROUP_BYTES = 700 * 1048576; // keep each share sheet small enough for a phone's memory
-  var MIME = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", heic: "image/heic" };
-  var batch;
-  function resetBatch() { batch = { loading: false, ready: false, done: 0, total: 0, groups: [], next: 0, key: "" }; progress(null); }
-  resetBatch();
-  function listKey(list) { return list.map(function (i) { return i.dl; }).join("|"); }
-  function progress(p) { $("prog").hidden = p === null; if (p !== null) $("progbar").style.width = Math.round(p * 100) + "%"; }
-  function loadBatch() {
-    var list = downloadable();
-    if (!list.length || batch.loading) return;
-    resetBatch();
-    batch.loading = true; batch.total = list.length; batch.key = listKey(list);
-    var files = [], failed = [], k = 0;
-    render(); progress(0);
-    function next() {
-      if (k >= list.length) return Promise.resolve();
-      var it = list[k++];
-      status("Loading " + k + " of " + list.length + ": " + it.name + "…");
-      return fetch(it.dl).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
-        .then(function (b) {
-          var ext = (it.name.split(".").pop() || "").toLowerCase();
-          files.push(new File([b], it.name, { type: MIME[ext] || b.type || "application/octet-stream" }));
-        }, function () { failed.push(it.name); })
-        .then(function () { batch.done = k; progress(k / list.length); render(); return next(); });
-    }
-    next().then(function () {
-      batch.loading = false;
-      if (!files.length) { resetBatch(); render(); status("Couldn't load any of the files.", "err"); return; }
-      var groups = [[]], size = 0;
-      files.forEach(function (f) {
-        if (groups[groups.length - 1].length && size + f.size > GROUP_BYTES) { groups.push([]); size = 0; }
-        groups[groups.length - 1].push(f); size += f.size;
-      });
-      batch.groups = groups; batch.ready = true; batch.next = 0;
-      render();
-      var total = files.reduce(function (a, f) { return a + f.size; }, 0);
-      status(files.length + " files ready (" + fmt(total) + "). Tap the green button, choose Save to Files, then pick your folder." +
-        (groups.length > 1 ? " They're split into " + groups.length + " groups so your phone can handle them." : "") +
-        (failed.length ? " Couldn't load: " + failed.join(", ") + "." : ""), failed.length ? "warn" : "ok");
-    });
+  function rowFor(i) {
+    var li = document.createElement("li"); li.className = "item" + (started[i.dl] ? " done" : "");
+    var canView = !!i.dl && (i.type === "videos" || i.type === "images");
+    var th = document.createElement("button"); th.type = "button"; th.className = "thumb"; th.setAttribute("aria-label", "Watch " + i.name);
+    if (i.thumb) {
+      var im = document.createElement("img"); im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; im.src = i.thumb;
+      im.onerror = function () { im.remove(); glyph(th, i); };
+      th.appendChild(im);
+    } else if (i.type === "videos" && i.dl) {
+      th.dataset.preview = viewUrl(i);   // filled in with the first frame when it scrolls into view
+      glyph(th, i);
+    } else glyph(th, i);
+    if (i.type === "videos") { var pb = document.createElement("span"); pb.className = "playbadge"; pb.textContent = "▶"; th.appendChild(pb); }
+
+    var info = document.createElement("button"); info.type = "button"; info.className = "info";
+    var nm = document.createElement("div"); nm.className = "name"; nm.textContent = i.name;
+    var meta = document.createElement("div"); meta.className = "meta";
+    var kind = document.createElement("span"); kind.className = "kind " + i.type;
+    kind.textContent = i.type === "videos" ? "Video" : i.type === "images" ? "Image" : i.type === "streams" ? "Stream" : "File";
+    meta.appendChild(kind);
+    if (i.size) { var sz = document.createElement("span"); sz.textContent = "· " + fmt(i.size); meta.appendChild(sz); }
+    if (started[i.dl]) { var ok = document.createElement("span"); ok.className = "sent"; ok.textContent = "· Sent"; meta.appendChild(ok); }
+    info.appendChild(nm); info.appendChild(meta);
+    if (canView) { th.addEventListener("click", function () { openViewer(i); }); info.addEventListener("click", function () { openViewer(i); }); }
+    else { th.disabled = true; info.disabled = true; }
+
+    var a = document.createElement("a");
+    if (i.dl) {
+      a.className = "dlbtn"; a.href = i.dl; a.setAttribute("download", i.name); a.setAttribute("aria-label", "Download " + i.name);
+      a.textContent = started[i.dl] ? "✓" : "↓";
+      a.addEventListener("click", function () { started[i.dl] = true; setTimeout(render, 50); });
+    } else { a.className = "dlbtn off"; a.textContent = "n/a"; a.title = "Streaming playlists aren't supported yet"; }
+    li.appendChild(th); li.appendChild(info); li.appendChild(a);
+    return li;
   }
-  function shareGroup() {
-    var g = batch.groups[batch.next];
-    if (!g) return;
-    if (!navigator.canShare({ files: g })) { status("Your phone won't take these files together. Try fewer files (use the Videos or Images filter).", "err"); return; }
-    status("Opening the share sheet… If nothing appears, this browser can't save several files at once: use Download all with Automatic instead, or open this page in Safari.", "warn");
-    navigator.share({ files: g }).then(function () {
-      batch.next++;
-      if (batch.next >= batch.groups.length) { var n = batch.groups.reduce(function (a, x) { return a + x.length; }, 0); resetBatch(); render(); status("Saved " + n + " files.", "ok"); }
-      else { render(); status("Group " + batch.next + " saved. Tap the green button for the next group.", "ok"); }
-    }).catch(function (e) {
-      if (e && e.name === "AbortError") status("Cancelled. Tap the green button to try again.");
-      else status("The share sheet didn't open (" + (e && e.message || "unknown") + ").", "err");
-    });
+  function glyph(th, i) {
+    if (th.querySelector(".glyph")) return;
+    var g = document.createElement("span"); g.className = "glyph";
+    g.textContent = i.type === "images" ? "◧" : i.type === "videos" ? "" : "▤";
+    if (g.textContent) th.insertBefore(g, th.firstChild);
   }
 
-  // ---- Download all automatically ----
-  // Speeds. "wait" starts the next download once the browser's save menu for
-  // the previous one has closed (the page loses focus while a menu is open and
-  // gets it back afterwards). If the browser never signals that, it falls back
-  // to one every 3 s. The others are milliseconds between downloads.
-  var SPEEDS = [["wait", "After each save"], ["3000", "One every 3 s"], ["1000", "One per second"], ["300", "All at once"]];
-  var autoTimer = null, autoTick = null, autoPos = 0, autoTotal = 0, autoNextAt = 0, autoPref = false, autoSpeed = "wait";
-  var autoWaiting = false, autoSawMenu = false, autoList = [], audioCtx = null;
-  var started = {};   // dl link -> true once its download was started
-  try { autoPref = localStorage.getItem("vdl:auto") === "1"; autoSpeed = localStorage.getItem("vdl:speed") || "wait"; } catch (e) {}
-
-  function stopAuto() {
-    if (autoTimer) clearTimeout(autoTimer);
-    if (autoTick) clearInterval(autoTick);
-    autoTimer = autoTick = null; autoPos = 0; autoWaiting = false; progress(null);
-    $("runbar").hidden = true;
+  // First-frame previews for videos without a thumbnail, loaded only when visible.
+  var thumbObserver = "IntersectionObserver" in window ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      if (!en.isIntersecting) return;
+      var th = en.target; thumbObserver.unobserve(th);
+      var v = document.createElement("video");
+      v.muted = true; v.playsInline = true; v.preload = "metadata"; v.src = th.dataset.preview + "#t=0.5";
+      v.addEventListener("loadeddata", function () { var g = th.querySelector(".glyph"); if (g) g.remove(); });
+      v.addEventListener("error", function () { v.remove(); });
+      th.insertBefore(v, th.firstChild);
+    });
+  }, { rootMargin: "200px" }) : null;
+  function observeThumbs() {
+    if (!thumbObserver) return;
+    document.querySelectorAll(".thumb[data-preview]").forEach(function (th) { if (!th.querySelector("video")) thumbObserver.observe(th); });
   }
-  function gapMs() { return autoSpeed === "wait" ? 3000 : (+autoSpeed || 3000); }
-  function autoStatus() {
-    var left = autoTotal - autoPos;
-    var nextIn = Math.max(0, Math.ceil((autoNextAt - Date.now()) / 1000));
-    var when = !left ? "" : autoWaiting ? "Next one starts after you save this one" : "Next one in " + nextIn + " s";
-    $("rbcount").textContent = autoPos + " / " + autoTotal;
-    $("rbnote").textContent = (autoList[autoPos - 1] ? autoList[autoPos - 1].name + " · " : "") + when;
-    $("rbbar").style.width = (autoTotal ? (autoPos / autoTotal) * 100 : 0) + "%";
-    var eta = Math.ceil((left * gapMs()) / 1000);
-    status(autoPos + " of " + autoTotal + " started" + (left && !autoWaiting ? " · about " + (eta >= 90 ? Math.round(eta / 60) + " min" : eta + " s") + " left" : "") + ". Save each one as your browser asks.", "ok");
-    progress(autoTotal ? autoPos / autoTotal : 0);
+
+  // ---------- download all ----------
+  $("dlall").addEventListener("click", function () {
+    var q = queue(), left = remaining();
+    if (!left.length) { started = {}; manualNext = -1; render(); left = remaining(); }
+    if (mode === "auto") { startAuto(left); return; }
+    // one at a time: each tap sends the next file
+    var it = left[0];
+    send(it);
+    var after = remaining().length;
+    manualNext = after ? 0 : -1;
+    status(after ? "Sent " + it.name + ". Save it, then tap Next." : "All " + q.length + " sent.", "ok");
+    render();
+  });
+
+  // Automatic: "wait" starts the next file once the browser's save menu for the
+  // previous one has closed (the page loses focus while the menu is open). If the
+  // browser gives no such signal, it carries on every 3 s.
+  var autoTimer = null, autoTick = null, autoActive = false, autoList = [], autoPos = 0, autoNextAt = 0;
+  var waiting = false, sawMenu = false, audioCtx = null, fadeTimer = null;
+  function gap() { return speed === "wait" ? 3000 : (+speed || 3000); }
+
+  function strip(countText, note, pct, done) {
+    var s = $("strip");
+    clearTimeout(fadeTimer);
+    s.hidden = false; s.className = "strip" + (done ? " done" : "");
+    $("scount").textContent = countText; $("snote").textContent = note; $("sbar").style.width = pct + "%";
+    $("sstop").textContent = done ? "OK" : "Stop";
+  }
+  function hideStrip() { var s = $("strip"); s.classList.add("fade"); fadeTimer = setTimeout(function () { s.hidden = true; s.classList.remove("fade"); }, 300); }
+  function updateStrip() {
+    var left = autoList.length - autoPos;
+    var wait = Math.max(0, Math.ceil((autoNextAt - Date.now()) / 1000));
+    var cur = autoList[autoPos - 1];
+    var note = !left ? "" : waiting ? "Save this one to continue" : "Next in " + wait + " s";
+    strip(autoPos + " / " + autoList.length, (cur ? cur.name : "") + (note ? " · " + note : ""), autoList.length ? (autoPos / autoList.length) * 100 : 0, false);
   }
   function chime() {
     try {
       var c = audioCtx; if (!c) return;
-      [0, 0.18].forEach(function (t, k) {
+      [0, 0.16].forEach(function (t, k) {
         var o = c.createOscillator(), g = c.createGain();
-        o.frequency.value = k ? 1046 : 784; o.type = "sine";
+        o.type = "sine"; o.frequency.value = k ? 1046 : 784;
         g.gain.setValueAtTime(0.0001, c.currentTime + t);
-        g.gain.exponentialRampToValueAtTime(0.25, c.currentTime + t + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + t + 0.35);
-        o.connect(g); g.connect(c.destination); o.start(c.currentTime + t); o.stop(c.currentTime + t + 0.4);
+        g.gain.exponentialRampToValueAtTime(0.2, c.currentTime + t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + t + 0.3);
+        o.connect(g); g.connect(c.destination); o.start(c.currentTime + t); o.stop(c.currentTime + t + 0.35);
       });
     } catch (e) {}
   }
-  function finishAuto() {
-    clearInterval(autoTick); autoTimer = autoTick = null; autoWaiting = false;
-    var n = autoTotal; autoPos = 0; progress(1); render();
-    $("runbar").className = "runbar done"; $("runbar").hidden = false;
-    $("rbcount").textContent = "✓ All " + n + " started";
-    $("rbnote").textContent = "Nothing else will pop up. Check your browser's downloads list to see them finish.";
-    $("rbbar").style.width = "100%"; $("rbstop").textContent = "OK";
-    status("All " + n + " downloads started. When your browser's downloads list shows " + n + " finished, you're done.", "ok");
-    chime();
-  }
-  function scheduleNext(ms) {
-    if (autoTimer) clearTimeout(autoTimer);
-    autoNextAt = Date.now() + ms;
-    autoTimer = setTimeout(step, ms);
-  }
+  function schedule(ms) { clearTimeout(autoTimer); autoNextAt = Date.now() + ms; autoTimer = setTimeout(step, ms); }
   function step() {
     autoTimer = null;
     if (autoPos >= autoList.length) { finishAuto(); return; }
     var it = autoList[autoPos++];
-    started[it.dl] = true;
-    var f = document.createElement("iframe"); f.style.display = "none"; f.src = it.dl; document.body.appendChild(f);
-    setTimeout(function () { f.remove(); }, 120000);
-    if (autoSpeed === "wait") {
-      // Wait for the save menu to open and close; if no menu is detected in
-      // 2.5 s, carry on as "one every 3 s".
-      autoWaiting = true; autoSawMenu = false;
-      scheduleNext(gapMs());
-      setTimeout(function () { if (autoWaiting && !autoSawMenu) autoWaiting = false; }, 2500);
-    } else {
-      autoWaiting = false;
-      scheduleNext(gapMs());
-    }
-    autoStatus(); render();
+    send(it);
+    waiting = speed === "wait"; sawMenu = false;
+    schedule(gap());
+    if (waiting) setTimeout(function () { if (waiting && !sawMenu) waiting = false; }, 2500);
+    updateStrip(); render();
   }
-  function menuOpened() { if (autoTimer && autoWaiting) { autoSawMenu = true; clearTimeout(autoTimer); autoTimer = -1; autoStatus(); } }
-  function menuClosed() {
-    if (autoWaiting && autoSawMenu) { autoWaiting = false; autoSawMenu = false; scheduleNext(900); autoStatus(); }
+  function startAuto(list) {
+    if (!list.length) return;
+    try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.resume) audioCtx.resume(); } catch (e) {}
+    autoList = list; autoPos = 0; autoActive = true;
+    autoTick = setInterval(updateStrip, 1000);
+    status("");
+    schedule(0); render();
   }
+  function finishAuto() {
+    clearInterval(autoTick); autoTimer = autoTick = null; autoActive = false; waiting = false;
+    var n = autoList.length;
+    strip("✓ " + n + " sent", "Your browser's downloads list shows them finishing", 100, true);
+    fadeTimer = setTimeout(hideStrip, 6000);
+    status("All " + plural(n, "file") + " sent. Check your browser's downloads to see them finish.", "ok");
+    chime(); render();
+  }
+  function stopAuto(silent) {
+    var was = autoActive, n = autoPos, t = autoList.length;
+    clearTimeout(autoTimer); clearInterval(autoTick);
+    autoTimer = autoTick = null; autoActive = false; waiting = false;
+    $("strip").hidden = true;
+    if (was && !silent) { status("Stopped after " + n + " of " + t + ". Files already sent keep downloading; cancel them in your browser's downloads if needed.", "warn"); render(); }
+  }
+  $("sstop").addEventListener("click", function () { if ($("strip").classList.contains("done")) hideStrip(); else stopAuto(false); });
+  function menuOpened() { if (autoActive && waiting) { sawMenu = true; clearTimeout(autoTimer); autoTimer = null; updateStrip(); } }
+  function menuClosed() { if (autoActive && waiting && sawMenu) { waiting = false; sawMenu = false; schedule(900); updateStrip(); } }
   window.addEventListener("blur", menuOpened);
   window.addEventListener("focus", menuClosed);
   document.addEventListener("visibilitychange", function () { if (document.hidden) menuOpened(); else menuClosed(); });
 
-  function startAuto() {
-    var list = downloadable().filter(function (i) { return !started[i.dl]; });
-    if (!list.length) return;
-    try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume && audioCtx.resume(); } catch (e) {}
-    autoList = list; autoPos = 0; autoTotal = list.length;
-    $("runbar").className = "runbar"; $("runbar").hidden = false; $("rbstop").textContent = "Stop";
-    autoTick = setInterval(autoStatus, 1000);
-    autoTimer = setTimeout(step, 0);
-    render();
-  }
-  $("rbstop").addEventListener("click", function () {
-    if ($("runbar").className.indexOf("done") >= 0) { $("runbar").hidden = true; return; }
-    var n = autoPos, t = autoTotal; stopAuto(); render();
-    status("Stopped after " + n + " of " + t + ". Files marked Started were already sent to your browser; cancel any of those in its downloads list. Tap \"Download the other …\" to carry on later.", "warn");
+  // ---------- save all to a folder (share sheet; Safari) ----------
+  var CAN_SHARE = (function () {
+    try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [new File(["x"], "t.jpg", { type: "image/jpeg" })] })); } catch (e) { return false; }
+  })();
+  var MIME = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", heic: "image/heic" };
+  var shareReady = null;
+  $("shareAll").addEventListener("click", function () {
+    var btn = $("shareAll");
+    if (shareReady) {
+      var files = shareReady;
+      status("Opening the share sheet… If nothing appears, this browser can't save several files at once; use Download all instead.", "warn");
+      navigator.share({ files: files }).then(function () { shareReady = null; btn.textContent = "Save all to a folder (Safari)"; status("Saved " + plural(files.length, "file") + ".", "ok"); },
+        function (e) { status(e && e.name === "AbortError" ? "Cancelled." : "The share sheet didn't open.", "warn"); });
+      return;
+    }
+    var list = queue(), out = [], k = 0;
+    btn.disabled = true;
+    (function next() {
+      if (k >= list.length) {
+        btn.disabled = false;
+        if (!out.length) { status("Couldn't load the files.", "err"); return; }
+        shareReady = out; btn.textContent = "Tap again to save " + plural(out.length, "file");
+        status(plural(out.length, "file") + " ready. Tap the link again, then choose Save to Files.", "ok");
+        return;
+      }
+      var it = list[k++];
+      status("Loading " + k + " of " + list.length + "…");
+      fetch(it.dl).then(function (r) { if (!r.ok) throw 0; return r.blob(); }).then(function (b) {
+        var ext = (it.name.split(".").pop() || "").toLowerCase();
+        out.push(new File([b], it.name, { type: MIME[ext] || b.type || "application/octet-stream" }));
+      }, function () {}).then(next);
+    })();
   });
 
-  // ---- Watch in the page ----
-  function viewUrl(i) { return i.dl + (i.dl.indexOf("?") < 0 ? "?" : "&") + "view=1"; }
+  // ---------- viewer ----------
   function openViewer(i) {
     viewList = shown().filter(function (x) { return x.dl && (x.type === "videos" || x.type === "images"); });
     viewPos = Math.max(0, viewList.indexOf(i));
-    showCurrent();
-    $("viewer").hidden = false;
-    $("vclose").focus();
+    showCurrent(); $("viewer").hidden = false; $("vclose").focus();
   }
   function showCurrent() {
     var i = viewList[viewPos], m = $("vmedia");
     m.textContent = "";
     if (i.type === "videos") {
-      var v = document.createElement("video");
-      v.controls = true; v.playsInline = true; v.autoplay = true; v.preload = "metadata"; v.src = viewUrl(i);
-      v.onerror = function () { m.textContent = ""; var e = document.createElement("div"); e.style.cssText = "color:#e6ebf2;padding:20px;font-size:14px"; e.textContent = "This video won't play here. Download it to watch it."; m.appendChild(e); };
+      var v = document.createElement("video"); v.controls = true; v.playsInline = true; v.autoplay = true; v.preload = "metadata"; v.src = viewUrl(i);
+      v.onerror = function () { m.textContent = ""; var d = document.createElement("div"); d.className = "vmsg"; d.textContent = "This video won't play here. Download it to watch it."; m.appendChild(d); };
       m.appendChild(v);
-    } else {
-      var img = document.createElement("img"); img.alt = i.name; img.src = viewUrl(i); m.appendChild(img);
-    }
+    } else { var img = document.createElement("img"); img.alt = i.name; img.src = viewUrl(i); m.appendChild(img); }
     $("vname").textContent = (viewPos + 1) + " / " + viewList.length + " · " + i.name + (i.size ? " · " + fmt(i.size) : "");
     $("vdl").href = i.dl; $("vdl").setAttribute("download", i.name);
     $("vprev").disabled = viewPos === 0; $("vnext").disabled = viewPos >= viewList.length - 1;
   }
   function closeViewer() { $("viewer").hidden = true; $("vmedia").textContent = ""; }
+  $("vdl").addEventListener("click", function () { var i = viewList[viewPos]; if (i) { started[i.dl] = true; render(); } });
   $("vclose").addEventListener("click", closeViewer);
   $("vprev").addEventListener("click", function () { if (viewPos > 0) { viewPos--; showCurrent(); } });
   $("vnext").addEventListener("click", function () { if (viewPos < viewList.length - 1) { viewPos++; showCurrent(); } });
-  $("viewer").addEventListener("click", function (e) { if (e.target.id === "viewer") closeViewer(); });
   document.addEventListener("keydown", function (e) {
     if ($("viewer").hidden) return;
-    if (e.key === "Escape") closeViewer();
-    else if (e.key === "ArrowLeft") $("vprev").click();
-    else if (e.key === "ArrowRight") $("vnext").click();
+    if (e.key === "Escape") closeViewer(); else if (e.key === "ArrowLeft") $("vprev").click(); else if (e.key === "ArrowRight") $("vnext").click();
   });
 
-  // Tell the person straight away if the helper is locked or not set up
+  // ---------- sign-in check ----------
   fetch("/api/whoami", { credentials: "same-origin" }).then(function (r) {
-    if (r.status === 401) return r.json().then(function (d) { status(d.error || "Sign in to use the helper.", "warn"); });
+    if (r.status === 401) return r.json().then(function (d) { status(d.error || "Sign in to use the downloader.", "warn"); });
   }).catch(function () {});
 })();
 </script>
