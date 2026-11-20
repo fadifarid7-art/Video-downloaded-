@@ -43,10 +43,23 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .btn.grow{flex:1}
 .btn:disabled{opacity:.5;cursor:default}
+.recent{display:flex;flex-direction:column;gap:6px}
+.rlabel{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.rlist{display:flex;flex-direction:column;gap:6px}
+.ritem{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px 12px;font-size:14px;text-align:left;display:flex;gap:8px;align-items:baseline;min-width:0}
+.ritem .rhost{font-weight:600;flex:none}
+.ritem .rpath{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.searched{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 10px 10px 14px;display:flex;align-items:center;gap:8px}
+.sinfo{flex:1;min-width:0}
+.slabel{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.slink{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.searched .btn{padding:10px 14px}
+.searched .iconbtn{width:44px;padding:0;height:44px;font-size:18px}
 .pw{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:12px;font-size:16px}
 .opt{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
 .opt input{width:18px;height:18px;accent-color:var(--accent)}
 .status{margin:12px 2px 0;font-size:14px;color:var(--muted);min-height:1.2em}
+.status:empty{min-height:0;margin:0}
 .status.ok{color:var(--ok)}.status.warn{color:var(--warn)}.status.err{color:var(--err)}
 
 /* results */
@@ -129,6 +142,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
   <form class="card" id="form" autocomplete="off">
     <textarea id="url" rows="2" placeholder="Paste a link, or several (one per line)" autocapitalize="off" spellcheck="false" aria-label="Links" required></textarea>
+    <div class="recent" id="recent" hidden><div class="rlabel">Recent</div><div class="rlist" id="rlist"></div></div>
     <div class="row2">
       <button type="button" class="btn" id="paste">Paste</button>
       <button type="submit" class="btn primary grow" id="scan">Find files</button>
@@ -136,6 +150,12 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     <input type="password" id="pw" class="pw" placeholder="Link password" autocomplete="off" aria-label="Link password" hidden>
     <label class="opt"><input type="checkbox" id="all" checked> Include every page of a folder</label>
   </form>
+
+  <div class="searched" id="searched" hidden>
+    <div class="sinfo"><div class="slabel">Searched</div><div class="slink" id="slink"></div></div>
+    <button type="button" class="btn iconbtn" id="again" aria-label="Search again">↻</button>
+    <button type="button" class="btn primary" id="newlink">New link</button>
+  </div>
 
   <p class="status" id="status" role="status" aria-live="polite"></p>
 
@@ -254,12 +274,56 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   }
 
   // ---------- search ----------
-  $("url").value = store("vdl:last") || "";
+  var lastRaw = "";
+  function recentList() { try { return JSON.parse(store("vdl:recent") || "[]"); } catch (e) { return []; } }
+  function addRecent(raw) {
+    var r = recentList().filter(function (x) { return x !== raw; });
+    r.unshift(raw); store("vdl:recent", JSON.stringify(r.slice(0, 6)));
+  }
+  function describe(raw) {
+    var links = raw.match(/https?:\/\/[^\s<>"']+/g) || [];
+    if (links.length > 1) return { host: plural(links.length, "link"), path: links.map(function (l) { try { return new URL(l).host; } catch (e) { return l; } }).filter(function (h, k, a) { return a.indexOf(h) === k; }).join(", ") };
+    try { var u = new URL(links[0]); return { host: u.host.replace(/^www\./, ""), path: (u.pathname + u.search).replace(/^\/$/, "") }; }
+    catch (e) { return { host: raw.slice(0, 40), path: "" }; }
+  }
+  function renderRecent() {
+    var r = recentList(), box = $("rlist");
+    box.textContent = "";
+    $("recent").hidden = !r.length || !!$("url").value.trim();
+    r.forEach(function (raw) {
+      var d = describe(raw);
+      var b = document.createElement("button"); b.type = "button"; b.className = "ritem";
+      var h = document.createElement("span"); h.className = "rhost"; h.textContent = d.host;
+      var pth = document.createElement("span"); pth.className = "rpath"; pth.textContent = d.path;
+      b.appendChild(h); b.appendChild(pth);
+      b.addEventListener("click", function () { $("url").value = raw; runSearch(); });
+      box.appendChild(b);
+    });
+  }
+  function runSearch() { if ($("form").requestSubmit) $("form").requestSubmit(); else $("form").dispatchEvent(new Event("submit", { cancelable: true })); }
+  function collapse(raw) {
+    var d = describe(raw);
+    $("slink").textContent = d.host + (d.path && d.host.indexOf(" link") < 0 ? d.path : "") + " · " + plural(items.length, "file");
+    $("form").hidden = true; $("searched").hidden = false;
+  }
+  function expand(clear) {
+    $("searched").hidden = true; $("form").hidden = false;
+    if (clear) { $("url").value = ""; $("pw").value = ""; $("pw").hidden = true; }
+    renderRecent(); $("url").focus();
+  }
+  $("newlink").addEventListener("click", function () { expand(true); status(""); });
+  $("again").addEventListener("click", function () { $("url").value = lastRaw; runSearch(); });
+  $("url").addEventListener("input", renderRecent);
+  renderRecent();
+
+  // Paste: into an empty box, a pasted link searches straight away.
   $("paste").addEventListener("click", function () {
     if (!navigator.clipboard || !navigator.clipboard.readText) { status("Long-press the box and choose Paste.", "warn"); return; }
     navigator.clipboard.readText().then(function (t) {
       t = (t || "").trim(); var cur = $("url").value.trim();
       $("url").value = cur && t && cur.indexOf(t) < 0 ? cur + "\n" + t : (t || cur);
+      renderRecent();
+      if (!cur && /https?:\/\//.test(t)) runSearch();
     }, function () { status("Long-press the box and choose Paste.", "warn"); });
   });
 
@@ -268,7 +332,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     var raw = $("url").value.trim();
     var links = (raw.match(/https?:\/\/[^\s<>"']+/g) || []).filter(function (l, n, a) { return a.indexOf(l) === n; });
     if (!links.length) { status("Paste a full link, starting with https://", "err"); return; }
-    store("vdl:last", raw);
+    lastRaw = raw;
     stopAuto(true); started = {}; manualNext = -1;
     $("scan").disabled = true; $("results").hidden = true;
     var found = [], failed = [], title = "", n = 0, vias = [], notices = [];
@@ -298,6 +362,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       $("rsum").textContent = summary() + (tot ? " · " + tot + " total" : "");
       render();
       $("results").hidden = false;
+      if (items.length) { addRecent(raw); collapse(raw); }
       var tail = failed.length ? " Couldn't read " + plural(failed.length, "link") + ": " + failed.join("; ") : "";
       if (!items.length) status((failed.length ? "Nothing found." : "No videos or images on that page. Some sites only load them after you press play.") + tail, failed.length ? "err" : "warn");
       else { var vmsg = vias.length ? "Followed " + (vias.length === 1 ? "the link" : plural(vias.length, "link")) + " to " + vias.filter(function (h, k, a) { return a.indexOf(h) === k; }).join(", ") + "." : ""; var nmsg = notices.length ? " " + notices.join(" ") : ""; status((vmsg + nmsg + tail).trim(), notices.length || failed.length ? "warn" : vias.length ? "ok" : ""); }
