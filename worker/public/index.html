@@ -553,27 +553,42 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   // load only when on screen, a few at a time so the visible ones appear first,
   // and are kept once loaded so re-drawing the list never reloads them.
   var previewCache = {};                       // download link -> loaded <img>/<video>
-  var LIMIT = { img: 4, video: 2 }, active = { img: 0, video: 0 }, previewQueue = [];
+  // Previews mostly wait on the site, so many can load side by side; the limit
+  // only stops a huge folder from opening hundreds of connections at once.
+  var LIMIT = { img: 16, video: 6 }, active = { img: 0, video: 0 }, previewQueue = [], loadingNow = [];
   var loadObserver = "IntersectionObserver" in window ? new IntersectionObserver(function (entries) {
     entries.forEach(function (en) {
       var th = en.target; th._visible = en.isIntersecting;
       if (en.isIntersecting && !th._queued) { th._queued = true; previewQueue.push(th); }
     });
     pump();
-  }, { rootMargin: "150px" }) : null;
+  }, { rootMargin: "1200px 0px" }) : null;   // start well before a preview scrolls into view
+  // How far a preview is from the visible part of the screen (0 = on screen).
+  function distance(th) {
+    var r = th.getBoundingClientRect();
+    if (r.bottom >= 0 && r.top <= innerHeight) return 0;
+    return r.top > innerHeight ? r.top - innerHeight : -r.bottom;
+  }
   function pump() {
+    // Nearest first: what's on screen loads before what's further down.
+    previewQueue.sort(function (a, b) { return distance(a) - distance(b); });
+    // Until everything on screen has finished, don't start anything off screen
+    // (the browser would otherwise let off-screen pictures jump ahead).
+    var onScreenBusy = loadingNow.some(function (th) { return th.isConnected && distance(th) === 0; }) ||
+      previewQueue.some(function (th) { return th.isConnected && distance(th) === 0; });
     for (var k = 0; k < previewQueue.length;) {
       var th = previewQueue[k], kind = th.dataset.load;
       if (!th.isConnected) { previewQueue.splice(k, 1); continue; }
-      if (!th._visible || active[kind] >= LIMIT[kind]) { k++; continue; }
+      if (!th._visible || active[kind] >= LIMIT[kind] || (onScreenBusy && distance(th) > 0)) { k++; continue; }
       previewQueue.splice(k, 1); startPreview(th);
     }
   }
   function startPreview(th) {
     var kind = th.dataset.load, key = th.dataset.key, finished = false;
-    active[kind]++;
+    active[kind]++; loadingNow.push(th);
     function done(el) {
       if (finished) return; finished = true; active[kind]--;
+      loadingNow.splice(loadingNow.indexOf(th), 1);
       if (el) { previewCache[key] = el; var g = th.querySelector(".glyph"); if (g) g.remove(); }
       pump();
     }
@@ -597,6 +612,8 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     }
     document.querySelectorAll(".thumb[data-load]").forEach(function (th) { loadObserver.observe(th); });
   }
+  var scrollPump = null;
+  window.addEventListener("scroll", function () { clearTimeout(scrollPump); scrollPump = setTimeout(pump, 120); }, { passive: true });
 
   // ---------- download all ----------
   $("dlall").addEventListener("click", function () {
