@@ -84,7 +84,7 @@
           size: el.getAttribute("data-size") || "",
           url: location.origin + "/d/" + m[1],
           thumb: img ? abs(img.getAttribute("src")) : "",
-          via: "page", // the file's own page; its download button finishes the job
+          via: "token", // download link fetched the same way the file page's own button does it
         });
       });
       return out;
@@ -110,6 +110,22 @@
           });
       }
       return next();
+    },
+    // Same steps as the file page's Download button: ask for a one-time token,
+    // then open the file server link marked as a download.
+    downloadUrl: function (item) {
+      return fetch(location.origin + "/v2/api/public/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ file_slug: item.id }),
+      })
+        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(function (t) {
+          if (!t || !t.token || !t.file || !t.server) throw new Error("no download link returned");
+          return t.server + "/v2/" + t.file + "?token=" + encodeURIComponent(t.token) +
+            "&download=true" + (t.name ? "&n=" + encodeURIComponent(t.name) : "");
+        });
     },
     zip: function () {
       var id = this.folderId();
@@ -250,6 +266,7 @@
   var selected = {};   // id -> true
   var fileCache = {};  // id -> File, loaded and ready to hand over
   var batchBusy = false;
+  var queuePos = 0;    // next file for "one by one" downloads
 
   function status(text, kind) { var s = $("st"); s.textContent = text || ""; s.className = "status" + (kind ? " " + kind : ""); }
 
@@ -306,8 +323,9 @@
       if (i.type === "streams") {
         a.className = "dl off"; a.textContent = "Stream"; a.href = i.url; a.target = "_blank"; a.rel = "noopener";
         a.title = "Streaming playlist: needs a converter, not a plain download";
-      } else if (i.via === "page") {
-        a.textContent = "Open"; a.href = i.url; // file page; tap its download button there
+      } else if (i.via === "token") {
+        a.textContent = "Download"; a.href = i.url; // file page stays as the long-press fallback
+        a.addEventListener("click", function (e) { e.preventDefault(); tokenDownload(i, a); });
       } else {
         a.textContent = "Download"; a.href = i.url; a.setAttribute("download", i.name);
         a.addEventListener("click", function (e) { e.preventDefault(); saveDirect(i, a); });
@@ -344,6 +362,19 @@
           location.href = url;
         }).catch(function (e) { status("ZIP failed: " + e.message, "err"); }).then(function () { b.disabled = false; });
       });
+      var queue = items.filter(function (i) { return i.via === "token" && (filter === "all" || i.type === filter); });
+      if (queue.length) {
+        if (queuePos >= queue.length) queuePos = 0;
+        var qb = btn(queuePos === 0 ? "Download all " + queue.length + ", one by one" : "Next: " + (queuePos + 1) + " of " + queue.length, false, function (b) {
+          var item = queue[queuePos];
+          tokenDownload(item, b, function () {
+            queuePos++;
+            if (queuePos >= queue.length) { queuePos = 0; status("Started all " + queue.length + " downloads.", "ok"); }
+            renderTools();
+          });
+        });
+        if (queuePos > 0) btn("Restart", true, function () { queuePos = 0; renderTools(); });
+      }
       if (adapter.totalPages() > 1 && !adapter._allLoaded) {
         btn("Load all " + adapter.totalPages() + " pages", true, function (b) {
           b.disabled = true;
@@ -434,6 +465,22 @@
         status("Couldn't load " + i.name + " here. The site may block background loading.", "warn");
       })
       .then(function () { a.removeAttribute("aria-busy"); });
+  }
+
+  function tokenDownload(i, a, after) {
+    if (a.getAttribute("aria-busy") === "true") return;
+    a.setAttribute("aria-busy", "true");
+    var label = a.textContent;
+    a.textContent = "Getting link…";
+    status("Getting the download link for " + i.name + "…");
+    adapter.downloadUrl(i).then(function (url) {
+      status("Downloading " + i.name + ". Pick where to save it in your browser's menu.", "ok");
+      location.href = url;
+      after && after();
+    }).catch(function (e) {
+      status("Couldn't get a download link for " + i.name + " (" + e.message + "). Opening its file page instead.", "warn");
+      location.href = i.url;
+    }).then(function () { a.textContent = label; a.removeAttribute("aria-busy"); });
   }
 
   function selectedItems() { return items.filter(function (i) { return selected[i.id]; }); }
@@ -538,7 +585,7 @@
     adapter.scan().then(function (found) {
       items = found;
       render();
-      if (adapter === folderHost) status("Tap Open to go to a file's page and use its download button, or grab the whole folder as a ZIP.");
+      if (adapter === folderHost) status("Tap Download on a file, or Download all to go through them one at a time.");
       else if (items.length) status(USE_SHARE ? "Tap Download, then Save. Choose Save to Files to pick a folder." : "Tap Download. Your browser asks where to save.");
     }).catch(function (e) { status("Scan failed: " + e.message, "err"); });
   }
