@@ -25,6 +25,14 @@ form{display:flex;flex-direction:column;gap:10px;background:var(--surface);borde
 .speed{font:inherit;font-size:14px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
 .done{color:var(--ok);font-weight:600}
 .row.isdone{opacity:.8}
+.runbar{position:fixed;left:0;right:0;top:0;z-index:40;background:#2456d6;color:#fff;padding:calc(env(safe-area-inset-top,0px) + 12px) max(16px,env(safe-area-inset-right,0px)) 12px max(16px,env(safe-area-inset-left,0px));box-shadow:0 4px 18px rgba(0,0,0,.35)}
+.runbar.done{background:#15803d}
+.rbrow{display:flex;align-items:center;gap:12px}
+.rbcount{font-size:30px;font-weight:800;letter-spacing:-.01em;flex:1;font-variant-numeric:tabular-nums}
+.rbstop{font:inherit;font-weight:700;font-size:16px;background:#fff;color:#0b1220;border:0;border-radius:10px;padding:10px 16px;cursor:pointer}
+.rbnote{font-size:15px;margin-top:4px;opacity:.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rbtrack{height:8px;background:rgba(255,255,255,.3);border-radius:4px;overflow:hidden;margin-top:10px}
+.rbtrack>i{display:block;height:100%;width:0;background:#fff;transition:width .3s}
 label.auto{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);padding:0 4px}
 .progress{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:-2px 0 10px}
 .progress>i{display:block;height:100%;width:0;background:var(--image);transition:width .2s}
@@ -68,6 +76,11 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
 </style>
 </head>
 <body>
+<div class="runbar" id="runbar" hidden role="status" aria-live="polite">
+  <div class="rbrow"><div class="rbcount" id="rbcount">0 / 0</div><button type="button" class="rbstop" id="rbstop">Stop</button></div>
+  <div class="rbnote" id="rbnote"></div>
+  <div class="rbtrack"><i id="rbbar"></i></div>
+</div>
 <div class="wrap">
   <h1>Video Downloader</h1>
   <p class="lead">Paste a link to a page, a file or a folder, or several links, one per line. You'll get a list of its videos and images with download buttons.</p>
@@ -383,50 +396,104 @@ label.opt{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--mut
   }
 
   // ---- Download all automatically ----
-  // Speeds: milliseconds between downloads. "All at once" still spaces them a
-  // little so the browser and the site aren't hit with everything in one instant.
-  var SPEEDS = [["3000", "One every 3 s"], ["1000", "One per second"], ["300", "All at once"]];
-  var autoTimer = null, autoTick = null, autoPos = 0, autoTotal = 0, autoNextAt = 0, autoPref = false, autoSpeed = "3000";
+  // Speeds. "wait" starts the next download once the browser's save menu for
+  // the previous one has closed (the page loses focus while a menu is open and
+  // gets it back afterwards). If the browser never signals that, it falls back
+  // to one every 3 s. The others are milliseconds between downloads.
+  var SPEEDS = [["wait", "After each save"], ["3000", "One every 3 s"], ["1000", "One per second"], ["300", "All at once"]];
+  var autoTimer = null, autoTick = null, autoPos = 0, autoTotal = 0, autoNextAt = 0, autoPref = false, autoSpeed = "wait";
+  var autoWaiting = false, autoSawMenu = false, autoList = [], audioCtx = null;
   var started = {};   // dl link -> true once its download was started
-  try { autoPref = localStorage.getItem("vdl:auto") === "1"; autoSpeed = localStorage.getItem("vdl:speed") || "3000"; } catch (e) {}
+  try { autoPref = localStorage.getItem("vdl:auto") === "1"; autoSpeed = localStorage.getItem("vdl:speed") || "wait"; } catch (e) {}
+
   function stopAuto() {
     if (autoTimer) clearTimeout(autoTimer);
     if (autoTick) clearInterval(autoTick);
-    autoTimer = autoTick = null; autoPos = 0; progress(null);
+    autoTimer = autoTick = null; autoPos = 0; autoWaiting = false; progress(null);
+    $("runbar").hidden = true;
   }
+  function gapMs() { return autoSpeed === "wait" ? 3000 : (+autoSpeed || 3000); }
   function autoStatus() {
-    var left = autoTotal - autoPos, gap = +autoSpeed;
+    var left = autoTotal - autoPos;
     var nextIn = Math.max(0, Math.ceil((autoNextAt - Date.now()) / 1000));
-    var eta = Math.ceil((left * gap) / 1000);
-    status(autoPos + " of " + autoTotal + " started" +
-      (left ? " · next in " + nextIn + " s · about " + (eta >= 90 ? Math.round(eta / 60) + " min" : eta + " s") + " left" : "") +
-      ". Save each one as your browser asks.", "ok");
+    var when = !left ? "" : autoWaiting ? "Next one starts after you save this one" : "Next one in " + nextIn + " s";
+    $("rbcount").textContent = autoPos + " / " + autoTotal;
+    $("rbnote").textContent = (autoList[autoPos - 1] ? autoList[autoPos - 1].name + " · " : "") + when;
+    $("rbbar").style.width = (autoTotal ? (autoPos / autoTotal) * 100 : 0) + "%";
+    var eta = Math.ceil((left * gapMs()) / 1000);
+    status(autoPos + " of " + autoTotal + " started" + (left && !autoWaiting ? " · about " + (eta >= 90 ? Math.round(eta / 60) + " min" : eta + " s") + " left" : "") + ". Save each one as your browser asks.", "ok");
     progress(autoTotal ? autoPos / autoTotal : 0);
   }
+  function chime() {
+    try {
+      var c = audioCtx; if (!c) return;
+      [0, 0.18].forEach(function (t, k) {
+        var o = c.createOscillator(), g = c.createGain();
+        o.frequency.value = k ? 1046 : 784; o.type = "sine";
+        g.gain.setValueAtTime(0.0001, c.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.25, c.currentTime + t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + t + 0.35);
+        o.connect(g); g.connect(c.destination); o.start(c.currentTime + t); o.stop(c.currentTime + t + 0.4);
+      });
+    } catch (e) {}
+  }
+  function finishAuto() {
+    clearInterval(autoTick); autoTimer = autoTick = null; autoWaiting = false;
+    var n = autoTotal; autoPos = 0; progress(1); render();
+    $("runbar").className = "runbar done"; $("runbar").hidden = false;
+    $("rbcount").textContent = "✓ All " + n + " started";
+    $("rbnote").textContent = "Nothing else will pop up. Check your browser's downloads list to see them finish.";
+    $("rbbar").style.width = "100%"; $("rbstop").textContent = "OK";
+    status("All " + n + " downloads started. When your browser's downloads list shows " + n + " finished, you're done.", "ok");
+    chime();
+  }
+  function scheduleNext(ms) {
+    if (autoTimer) clearTimeout(autoTimer);
+    autoNextAt = Date.now() + ms;
+    autoTimer = setTimeout(step, ms);
+  }
+  function step() {
+    autoTimer = null;
+    if (autoPos >= autoList.length) { finishAuto(); return; }
+    var it = autoList[autoPos++];
+    started[it.dl] = true;
+    var f = document.createElement("iframe"); f.style.display = "none"; f.src = it.dl; document.body.appendChild(f);
+    setTimeout(function () { f.remove(); }, 120000);
+    if (autoSpeed === "wait") {
+      // Wait for the save menu to open and close; if no menu is detected in
+      // 2.5 s, carry on as "one every 3 s".
+      autoWaiting = true; autoSawMenu = false;
+      scheduleNext(gapMs());
+      setTimeout(function () { if (autoWaiting && !autoSawMenu) autoWaiting = false; }, 2500);
+    } else {
+      autoWaiting = false;
+      scheduleNext(gapMs());
+    }
+    autoStatus(); render();
+  }
+  function menuOpened() { if (autoTimer && autoWaiting) { autoSawMenu = true; clearTimeout(autoTimer); autoTimer = -1; autoStatus(); } }
+  function menuClosed() {
+    if (autoWaiting && autoSawMenu) { autoWaiting = false; autoSawMenu = false; scheduleNext(900); autoStatus(); }
+  }
+  window.addEventListener("blur", menuOpened);
+  window.addEventListener("focus", menuClosed);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) menuOpened(); else menuClosed(); });
+
   function startAuto() {
     var list = downloadable().filter(function (i) { return !started[i.dl]; });
     if (!list.length) return;
-    autoPos = 0; autoTotal = list.length;
-    var gap = +autoSpeed || 3000;
-    function step() {
-      if (autoPos >= list.length) {
-        clearInterval(autoTick); autoTimer = autoTick = null;
-        var n = list.length; autoPos = 0; progress(1); render();
-        status("All " + n + " downloads started. When your browser's downloads list shows " + n + " finished, you're done.", "ok");
-        return;
-      }
-      var it = list[autoPos++];
-      started[it.dl] = true;
-      var f = document.createElement("iframe"); f.style.display = "none"; f.src = it.dl; document.body.appendChild(f);
-      setTimeout(function () { f.remove(); }, 120000);
-      autoNextAt = Date.now() + gap;
-      autoTimer = setTimeout(step, gap);
-      autoStatus(); render();
-    }
+    try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume && audioCtx.resume(); } catch (e) {}
+    autoList = list; autoPos = 0; autoTotal = list.length;
+    $("runbar").className = "runbar"; $("runbar").hidden = false; $("rbstop").textContent = "Stop";
     autoTick = setInterval(autoStatus, 1000);
     autoTimer = setTimeout(step, 0);
     render();
   }
+  $("rbstop").addEventListener("click", function () {
+    if ($("runbar").className.indexOf("done") >= 0) { $("runbar").hidden = true; return; }
+    var n = autoPos, t = autoTotal; stopAuto(); render();
+    status("Stopped after " + n + " of " + t + ". Files marked Started were already sent to your browser; cancel any of those in its downloads list. Tap \"Download the other …\" to carry on later.", "warn");
+  });
 
   // ---- Watch in the page ----
   function viewUrl(i) { return i.dl + (i.dl.indexOf("?") < 0 ? "?" : "&") + "view=1"; }
