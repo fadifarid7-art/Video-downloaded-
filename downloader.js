@@ -144,6 +144,23 @@
     },
   };
 
+  // A single file page (/d/<id>) with its own Download button: same token route.
+  var filePage = {
+    name: "file",
+    match: function () {
+      return /^\/d\/[A-Za-z0-9_-]+\/?$/.test(location.pathname) && !!document.getElementById("downloadButton");
+    },
+    scan: function () {
+      var id = location.pathname.split("/").filter(Boolean).pop();
+      var name = (typeof window.fileName === "string" && window.fileName) || document.title.split("|")[0].trim() || id;
+      var mime = typeof window.fileType === "string" ? window.fileType : "";
+      var type = /^video\//.test(mime) ? "videos" : /^image\//.test(mime) ? "images" : (kindOf(name) || "other");
+      return Promise.resolve([{ id: id, name: name, type: type, size: "", url: location.href, thumb: "", via: "token" }]);
+    },
+    downloadUrl: function (item) { return folderHost.downloadUrl(item); },
+    totalPages: function () { return 1; },
+  };
+
   var generic = {
     name: "generic",
     match: function () { return true; },
@@ -204,7 +221,7 @@
     },
   };
 
-  var adapter = folderHost.match() ? folderHost : generic;
+  var adapter = folderHost.match() ? folderHost : filePage.match() ? filePage : generic;
 
   // ---------- UI (shadow DOM keeps the site's CSS out) ----------
   var host = document.createElement("div");
@@ -478,6 +495,7 @@
       location.href = url;
       after && after();
     }).catch(function (e) {
+      if (adapter === filePage) { status("Couldn't get a download link (" + e.message + "). Use the page's own Download button.", "warn"); return; }
       status("Couldn't get a download link for " + i.name + " (" + e.message + "). Opening its file page instead.", "warn");
       location.href = i.url;
     }).then(function () { a.textContent = label; a.removeAttribute("aria-busy"); });
@@ -585,7 +603,8 @@
     adapter.scan().then(function (found) {
       items = found;
       render();
-      if (adapter === folderHost) status("Tap Download on a file, or Download all to go through them one at a time.");
+      if (adapter === filePage) status("Tap Download to save this file.");
+      else if (adapter === folderHost) status("Tap Download on a file, or Download all to go through them one at a time.");
       else if (items.length) status(USE_SHARE ? "Tap Download, then Save. Choose Save to Files to pick a folder." : "Tap Download. Your browser asks where to save.");
     }).catch(function (e) { status("Scan failed: " + e.message, "err"); });
   }
