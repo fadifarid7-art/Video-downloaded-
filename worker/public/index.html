@@ -52,6 +52,12 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 .ritem{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px 12px;font-size:14px;text-align:left;display:flex;gap:8px;align-items:baseline;min-width:0}
 .ritem .rhost{font-weight:600;flex:none}
 .ritem .rpath{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.top{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.top h1{margin:0;flex:1}
+.newsearch{padding:9px 14px;font-size:15px;background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.curlink{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);min-width:0;margin-top:1px}
+.curlink span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.again{border:0;background:none;color:var(--accent);font-size:16px;padding:0 4px;flex:none;line-height:1}
 .searched{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 10px 10px 14px;display:flex;align-items:center;gap:8px}
 .sinfo{flex:1;min-width:0}
 .slabel{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
@@ -143,7 +149,10 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 </div>
 
 <main class="wrap">
-  <h1>Downloader</h1>
+  <div class="top">
+    <h1>Downloader</h1>
+    <button type="button" class="btn newsearch" id="newlink" hidden>New search</button>
+  </div>
 
   <form class="card" id="form" autocomplete="off">
     <div class="urlwrap">
@@ -159,17 +168,15 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     <label class="opt"><input type="checkbox" id="all" checked> Include every page of a folder</label>
   </form>
 
-  <div class="searched" id="searched" hidden>
-    <div class="sinfo"><div class="slabel">Searched</div><div class="slink" id="slink"></div></div>
-    <button type="button" class="btn iconbtn" id="again" aria-label="Search again">↻</button>
-    <button type="button" class="btn primary" id="newlink">New link</button>
-  </div>
-
   <p class="status" id="status" role="status" aria-live="polite"></p>
 
   <section class="results" id="results" hidden>
     <div class="rhead">
-      <div class="rtext"><div class="rtitle" id="rtitle"></div><div class="rsum" id="rsum"></div></div>
+      <div class="rtext">
+        <div class="rtitle" id="rtitle"></div>
+        <div class="curlink"><span id="curlink"></span><button type="button" class="again" id="again" aria-label="Search this link again" title="Search again">↻</button></div>
+        <div class="rsum" id="rsum"></div>
+      </div>
       <select class="sort" id="sort" aria-label="Sort">
         <option value="page">As on page</option>
         <option value="small">Smallest first</option>
@@ -311,11 +318,11 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   function runSearch() { if ($("form").requestSubmit) $("form").requestSubmit(); else $("form").dispatchEvent(new Event("submit", { cancelable: true })); }
   function collapse(raw) {
     var d = describe(raw);
-    $("slink").textContent = d.host + (d.path && d.host.indexOf(" link") < 0 ? d.path : "") + " · " + plural(items.length, "file");
-    $("form").hidden = true; $("searched").hidden = false;
+    $("curlink").textContent = d.host + (d.path && d.host.indexOf(" link") < 0 ? d.path : "");
+    $("form").hidden = true; $("newlink").hidden = false;
   }
   function expand(clear) {
-    $("searched").hidden = true; $("form").hidden = false;
+    $("newlink").hidden = true; $("form").hidden = false;
     if (clear) { $("url").value = ""; $("pw").value = ""; $("pw").hidden = true; }
     syncClear();
     renderRecent(); $("url").focus();
@@ -347,7 +354,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     var raw = $("url").value.trim();
     var links = (raw.match(/https?:\/\/[^\s<>"']+/g) || []).filter(function (l, n, a) { return a.indexOf(l) === n; });
     if (!links.length) { status("Paste a full link, starting with https://", "err"); return; }
-    lastRaw = raw;
+    lastRaw = raw; $("curlink").textContent = "";
     stopAuto(true); started = {}; manualNext = -1;
     $("scan").disabled = true; $("results").hidden = true;
     var found = [], failed = [], title = "", n = 0, vias = [], notices = [];
