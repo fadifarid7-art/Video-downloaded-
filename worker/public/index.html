@@ -271,7 +271,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     store("vdl:last", raw);
     stopAuto(true); started = {}; manualNext = -1;
     $("scan").disabled = true; $("results").hidden = true;
-    var found = [], failed = [], title = "", n = 0;
+    var found = [], failed = [], title = "", n = 0, vias = [];
     function next() {
       if (n >= links.length) return Promise.resolve();
       var u = links[n++];
@@ -285,6 +285,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
             failed.push(res.d.error || "error"); return;
           }
           if (!title) title = res.d.title || u;
+          if (res.d.via) { try { vias.push(new URL(res.d.via).host); } catch (er) {} }
           (res.d.items || []).forEach(function (it) { if (!found.some(function (f) { return f.source && f.source === it.source; })) found.push(it); });
         }, function () { failed.push("couldn't reach the helper"); })
         .then(next);
@@ -298,7 +299,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       $("results").hidden = false;
       var tail = failed.length ? " Couldn't read " + plural(failed.length, "link") + ": " + failed.join("; ") : "";
       if (!items.length) status((failed.length ? "Nothing found." : "No videos or images on that page. Some sites only load them after you press play.") + tail, failed.length ? "err" : "warn");
-      else status(tail.trim(), failed.length ? "warn" : "");
+      else status((vias.length ? "Followed " + (vias.length === 1 ? "the link" : plural(vias.length, "link")) + " to " + vias.filter(function (h, k, a) { return a.indexOf(h) === k; }).join(", ") + "." : "") + tail, failed.length ? "warn" : vias.length ? "ok" : "");
     }).then(function () { $("scan").disabled = false; });
   });
 

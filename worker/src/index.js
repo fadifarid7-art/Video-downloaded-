@@ -217,10 +217,47 @@ async function verifyLink(pathname, env) {
 // ---------------------------------------------------------------- scanning
 
 async function scan(raw, all, password) {
-  const target = requireHttpUrl(raw);
-  const koofr = await koofrLink(target);
-  if (koofr) return await scanKoofr(koofr, password || "");
-  const page = await fetchPage(target);
+  const result = await scanInner(requireHttpUrl(raw), all, password);
+  return result;
+}
+
+// Ordinary forwarding: HTTP redirects (followed by fetch) and pages that forward
+// with a <meta http-equiv="refresh"> tag. Ad gates and "unlock" pages are not
+// worked around; they are just read like any other page.
+function metaRefresh(html, base) {
+  if (!html || html.length > 200000) return null;
+  for (const m of html.matchAll(/<meta\b[^>]*>/gi)) {
+    if (!/http-equiv\s*=\s*["']?refresh/i.test(m[0])) continue;
+    const c = attr(m[0], "content");
+    const mm = c.match(/^\s*(\d+(?:\.\d+)?)\s*[;,]\s*url\s*=\s*['"]?([^'"]+)/i);
+    if (mm && +mm[1] <= 10) { const u = absUrl(mm[2].trim(), base); if (u) return new URL(u); }
+  }
+  return null;
+}
+
+async function scanInner(start, all, password) {
+  let target = start, page, hops = 0;
+  for (;;) {
+    const koofr = await koofrLink(target);
+    if (koofr) return withVia(await scanKoofr(koofr, password || ""), start, target);
+    page = await fetchPage(target);
+    if (page.finalUrl.href !== target.href) {
+      const k2 = await koofrLink(page.finalUrl);
+      if (k2) return withVia(await scanKoofr(k2, password || ""), start, page.finalUrl);
+    }
+    const next = hops < 3 && metaRefresh(page.html, page.finalUrl);
+    if (!next || next.href === page.finalUrl.href) break;
+    target = next; hops++;
+  }
+  return withVia(await scanPage(page, all), start, page.finalUrl);
+}
+
+function withVia(result, start, end) {
+  if (end && end.host !== start.host) result.via = end.href;
+  return result;
+}
+
+async function scanPage(page, all) {
   const base = page.finalUrl;
 
   if (!page.html) {
