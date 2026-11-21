@@ -624,6 +624,46 @@ async function tokenDownloadUrl(pageUrl, slug) {
   return value;
 }
 
+const MEDIA_TYPES = {
+  mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska",
+  avi: "video/x-msvideo", wmv: "video/x-ms-wmv", flv: "video/x-flv", ts: "video/mp2t", m3u8: "application/vnd.apple.mpegurl",
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", heic: "image/heic", avif: "image/avif",
+  mp3: "audio/mpeg", m4a: "audio/mp4",
+};
+
+// "bytes=START-END" -> {start, end, total}. Only pieces we can cut cheaply: the
+// part to skip is read and thrown away, so very deep pieces are left to the site.
+const MAX_SKIP = 64 * 1048576;
+function parseRange(h, total) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(h || "");
+  if (!m || (m[1] === "" && m[2] === "")) return null;
+  let start, end;
+  if (m[1] === "") { if (!total) return null; start = Math.max(0, total - +m[2]); end = total - 1; }
+  else { start = +m[1]; end = m[2] === "" ? (total ? total - 1 : NaN) : +m[2]; }
+  if (total) end = Math.min(end, total - 1);
+  if (!isFinite(end) || start > end || start > MAX_SKIP) return null;
+  return { start, end, total };
+}
+
+function slice(body, start, end) {
+  let pos = 0;
+  const reader = body.getReader();
+  return new ReadableStream({
+    async pull(ctrl) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) { ctrl.close(); return; }
+        const from = Math.max(0, start - pos), to = Math.min(value.length, end - pos + 1);
+        pos += value.length;
+        if (to > from) ctrl.enqueue(value.subarray(from, to));
+        if (pos > end) { ctrl.close(); reader.cancel().catch(() => {}); return; }
+        if (to > from) return;
+      }
+    },
+    cancel() { reader.cancel().catch(() => {}); },
+  });
+}
+
 async function file(params, request, inline) {
   let upstreamUrl, name, referer;
   if (params.get("slug") && params.get("page")) {
@@ -653,8 +693,12 @@ async function file(params, request, inline) {
   if (!(up.ok || up.status === 206) || (method === "GET" && !up.body)) {
     return new Response("The file server answered with HTTP " + up.status + ".", { status: 502 });
   }
+  // Phones only play a video labelled as one. Some sites label every download as
+  // generic data, so fix the label from the file name when that happens.
+  let type = up.headers.get("content-type") || "";
+  if (!/^(video|image|audio)\//i.test(type)) type = MEDIA_TYPES[extOf(name)] || type || "application/octet-stream";
   const headers = new Headers({
-    "content-type": up.headers.get("content-type") || "application/octet-stream",
+    "content-type": type,
     "content-disposition": contentDisposition(name, inline),
     // The phone keeps each file for as long as its signed link is valid (6 hours).
     "cache-control": "private, max-age=21600, immutable",
@@ -665,6 +709,15 @@ async function file(params, request, inline) {
     if (v) headers.set(h, v);
   }
   if (!headers.has("accept-ranges")) headers.set("accept-ranges", "bytes");
+
+  // The phone asked for one piece but the site sent the whole file. Phones give
+  // up on that, so cut out the requested piece here and answer "206".
+  const want = range && up.status === 200 ? parseRange(range, +(up.headers.get("content-length") || 0)) : null;
+  if (want && method === "GET") {
+    headers.set("content-range", "bytes " + want.start + "-" + want.end + "/" + (want.total || "*"));
+    headers.set("content-length", String(want.end - want.start + 1));
+    return new Response(slice(up.body, want.start, want.end), { status: 206, headers });
+  }
   return new Response(method === "HEAD" ? null : up.body, { status: up.status === 206 ? 206 : 200, headers });
 }
 
