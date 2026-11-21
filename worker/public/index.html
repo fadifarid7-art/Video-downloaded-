@@ -253,6 +253,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     <button type="button" class="vbtn" id="vnext" aria-label="Next">›</button>
   </div>
   <div class="vbar">
+    <button type="button" class="vbtn" id="vfull" aria-label="Full screen">⛶ Full screen</button>
     <a class="vbtn go" id="vdl" href="#" style="flex:1;text-align:center">Download</a>
     <button type="button" class="vbtn" id="vclose">Close</button>
   </div>
@@ -781,6 +782,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       var n = viewList[k];
       if (n && n.type === "images" && !previewCache[n.dl]) { var pre = new Image(); pre.decoding = "async"; pre.src = viewUrl(n); }
     });
+    $("vfull").hidden = i.type !== "videos";
     $("vname").textContent = (viewPos + 1) + " / " + viewList.length + " · " + i.name + (i.size ? " · " + fmt(i.size) : "");
     $("vdl").href = i.dl; $("vdl").setAttribute("download", i.name);
     $("vprev").disabled = viewPos === 0; $("vnext").disabled = viewPos >= viewList.length - 1;
@@ -818,6 +820,22 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     dl.addEventListener("click", function () { started[i.dl] = true; render(); });
     row.appendChild(dl); box.appendChild(row); m.appendChild(box);
   }
+  // Full screen: iPhones use their own video player (rotation, normal controls);
+  // other browsers use the standard full-screen mode.
+  $("vfull").addEventListener("click", function () {
+    var v = document.querySelector("#vmedia video");
+    if (!v) return;
+    function go() {
+      try {
+        if (v.webkitEnterFullscreen) { v.webkitEnterFullscreen(); return; }
+        var el = v.requestFullscreen ? v : $("vmedia");
+        (el.requestFullscreen || el.webkitRequestFullscreen).call(el).catch(function () {});
+      } catch (e) { status("Full screen isn't available here. Turn your phone sideways instead.", "warn"); }
+    }
+    // iPhones only allow it once the video has started loading
+    if (v.readyState >= 1) go(); else { v.addEventListener("loadedmetadata", go, { once: true }); v.load(); }
+    v.play().catch(function () {});
+  });
   function closeViewer() { $("viewer").hidden = true; $("vmedia").textContent = ""; }
   $("vdl").addEventListener("click", function () { var i = viewList[viewPos]; if (i) { started[i.dl] = true; render(); } });
   $("vclose").addEventListener("click", closeViewer);
