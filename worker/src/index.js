@@ -61,7 +61,7 @@ export default {
       if (url.pathname === "/api/scan") {
         const result = await scan(url.searchParams.get("url"), url.searchParams.get("all") === "1", url.searchParams.get("password"));
         await signItems(result.items, env);
-        if (result.zip) await signItems([result.zip], env);
+        if (result.zip && typeof result.zip.dl === "object") await signItems([result.zip], env);
         result.items.forEach((i) => { delete i.blocked; });
         return json(result);
       }
@@ -330,9 +330,12 @@ function externalOnly(u) {
 }
 
 // ---------------------------------------------------------------- Pixeldrain
-// Public read API: /api/file/<id>/info and /api/list/<id> list files; downloads
-// use /api/file/<id>?download. Heavily-downloaded files get a rate-limit captcha,
-// which is surfaced to the user (pixeldrain's own page), never worked around.
+// Public read API: /api/file/<id>/info and /api/list/<id> list files. Pixeldrain
+// refuses files fetched through another site ("hotlinking" is for its paid plan),
+// so downloads are NOT proxied: the Download buttons point at pixeldrain's own
+// documented download address (/api/file/<id>?download) and the phone fetches
+// from pixeldrain directly, exactly like pixeldrain's own download button.
+// Watching opens the file on pixeldrain, since in-page playback is hotlinking.
 
 const PD = "https://pixeldrain.com";
 
@@ -358,7 +361,11 @@ function pdItem(f) {
     name, type,
     size: f.size ? String(f.size) : "",
     thumb: type === "images" || type === "videos" ? PD + "/api/file/" + f.id + "/thumbnail" : "",
-    dl: fileLink({ url: PD + "/api/file/" + f.id + "?download", name, ref: PD + "/u/" + f.id }),
+    dl: PD + "/api/file/" + f.id + "?download",     // straight from pixeldrain, not through the helper
+    direct: true,
+    noview: true,
+    watch: PD + "/u/" + f.id,
+    site: "pixeldrain",
     source: PD + "/u/" + f.id,
     blocked: f.can_download === false,
   };
@@ -371,13 +378,19 @@ async function scanPixeldrain(link) {
     const items = files.map(pdItem);
     const blocked = items.filter((i) => i.blocked).length;
     const out = { kind: "folder", title: j.title || "Pixeldrain album", items };
-    if (blocked) out.notice = blocked + " of these files can't be downloaded without a captcha; open them on pixeldrain.com.";
+    out.notice = "Pixeldrain files download straight from pixeldrain to your phone. To watch one, tap it to open it on pixeldrain (it doesn't allow playing inside other sites)." +
+      (blocked ? " " + blocked + " of these files need a captcha on pixeldrain first." : "");
+    // Pixeldrain serves several files as one ZIP when their IDs are joined with commas.
+    if (files.length > 1 && files.length <= 100) {
+      out.zip = { name: (j.title || "pixeldrain") + ".zip", dl: PD + "/api/file/" + files.map((f) => f.id).join(",") + "?download", by: "pixeldrain" };
+    }
     return out;
   }
   const f = await pdJson("/api/file/" + link.id + "/info");
   const it = pdItem(f);
   const out = { kind: "file", title: f.name || "Pixeldrain file", items: [it] };
-  if (it.blocked) out.notice = "This file needs a captcha to download; open it on pixeldrain.com and download there.";
+  out.notice = it.blocked ? "This file needs a captcha on pixeldrain first; open it there." :
+    "This file downloads straight from pixeldrain. To watch it, tap it to open it on pixeldrain.";
   return out;
 }
 

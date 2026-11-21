@@ -127,6 +127,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 .kind{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
 .kind.videos{color:var(--video)}.kind.images{color:var(--image)}
 .sent{color:var(--ok);font-weight:600}
+.onsite{color:var(--accent)}
 .dlbtn{width:42px;height:42px;flex:none;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;text-decoration:none;font-size:20px;font-weight:700}
 .dlbtn.off{background:var(--raised);color:var(--muted);font-size:11px;font-weight:600;pointer-events:none}
 .item.done .dlbtn{background:var(--raised);color:var(--ok)}
@@ -530,7 +531,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
   function rowFor(i) {
     var li = document.createElement("li"); li.className = "item" + (started[i.dl] ? " done" : "");
-    var canView = !!i.dl && (i.type === "videos" || i.type === "images");
+    var canView = !!i.dl && !i.noview && (i.type === "videos" || i.type === "images");
     var th = document.createElement("button"); th.type = "button"; th.className = "thumb"; th.setAttribute("aria-label", "Watch " + i.name);
     if (i.thumb) {
       var im = document.createElement("img"); im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; im.src = i.thumb;
@@ -556,6 +557,13 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     if (started[i.dl]) { var ok = document.createElement("span"); ok.className = "sent"; ok.textContent = "· Sent"; meta.appendChild(ok); }
     info.appendChild(nm); info.appendChild(meta);
     if (canView) { th.addEventListener("click", function () { openViewer(i); }); info.addEventListener("click", function () { openViewer(i); }); }
+    else if (i.noview && i.watch) {
+      // This site only allows watching on its own page: open it there.
+      var openSite = function () { var a2 = document.createElement("a"); a2.href = i.watch; a2.target = "_blank"; a2.rel = "noopener noreferrer"; document.body.appendChild(a2); a2.click(); a2.remove(); };
+      th.addEventListener("click", openSite); info.addEventListener("click", openSite);
+      th.setAttribute("aria-label", "Watch " + i.name + " on " + (i.site || "the site"));
+      var ext = document.createElement("span"); ext.className = "onsite"; ext.textContent = "· watch on " + (i.site || "site") + " ↗"; meta.appendChild(ext);
+    }
     else { th.disabled = true; info.disabled = true; }
 
     var a = document.createElement("a");
@@ -860,7 +868,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
   // ---------- viewer ----------
   function openViewer(i) {
-    viewList = shown().filter(function (x) { return x.dl && (x.type === "videos" || x.type === "images"); });
+    viewList = shown().filter(function (x) { return x.dl && !x.noview && (x.type === "videos" || x.type === "images"); });
     viewPos = Math.max(0, viewList.indexOf(i));
     showCurrent(); $("viewer").hidden = false; $("vclose").focus();
   }
