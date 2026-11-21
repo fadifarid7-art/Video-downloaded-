@@ -698,7 +698,14 @@ async function file(params, request, inline) {
   const method = request && request.method === "HEAD" ? "HEAD" : "GET";
   const up = await get(upstreamUrl, { method, headers: upHeaders, redirect: "follow" }, "the file server");
   if (up.status === 403) {
-    return new Response("The file host is asking for a captcha or blocking this download (403). Open the file on the host's own page and download it there.", { status: 403 });
+    // Pass on the site's own reason (e.g. pixeldrain's "hotlink_detected" or
+    // "file_rate_limited_captcha_required") so the page can say what's wrong.
+    let value = "", message = "";
+    try {
+      const t = (await up.text()).slice(0, 2000);
+      try { const j = JSON.parse(t); value = j.value || j.code || ""; message = j.message || ""; } catch { message = t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200); }
+    } catch {}
+    return new Response(JSON.stringify({ error: "blocked", value, message }), { status: 403, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   }
   if (!(up.ok || up.status === 206) || (method === "GET" && !up.body)) {
     return new Response("The file server answered with HTTP " + up.status + ".", { status: 502 });

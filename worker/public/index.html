@@ -909,7 +909,11 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     return fetch(viewUrl(i) + "&probe=" + Date.now(), { headers: { Range: "bytes=0-1" } })
       .then(function (r) {
         var info = { status: r.status, type: r.headers.get("content-type") || "" };
-        return r.text().then(function (t) { info.text = t.slice(0, 200); return info; }, function () { return info; });
+        return r.text().then(function (t) {
+          info.text = t.slice(0, 300);
+          try { var j = JSON.parse(t); info.value = j.value || ""; info.message = j.message || ""; } catch (e) {}
+          return info;
+        }, function () { return info; });
       }, function () { return { status: 0 }; });
   }
   function playbackProblem(m, i, d) {
@@ -917,7 +921,9 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     var why, retry = true;
     if (NO_PLAY[ext]) { why = "iPhones can't play ." + ext + " videos in a browser. Download it and open it in an app like VLC."; retry = false; }
     else if (!d.status) why = "Couldn't reach your downloader. Check your connection and try again.";
-    else if (d.status === 403) why = "The site is blocking playback of this file right now (it may want a captcha on its own page).";
+    else if (d.status === 403 && d.value === "hotlink_detected") { why = "This site doesn't let its videos play inside other websites unless you have its paid plan. Try Download, or watch it on the site itself."; retry = false; }
+    else if (d.status === 403 && /captcha/.test(d.value || "")) why = "The site wants you to solve a captcha on its own page for this file first. Open it there, then try again here.";
+    else if (d.status === 403) why = "The site is refusing playback of this file" + (d.message ? ": \u201c" + d.message + "\u201d" : ".") ;
     else if (d.status === 404 || d.status === 410) why = "The site says this file is gone.";
     else if (d.status >= 400) why = "The site didn't send the video" + (d.status ? " (error " + d.status + ")" : "") + ". It may be busy; try again in a moment.";
     else if (/^video\//.test(d.type)) { why = "The site sends the video fine, but it's in a format your phone's browser can't play (often a less common codec). Download it and open it in an app like VLC."; retry = false; }
@@ -930,6 +936,10 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       var again = document.createElement("button"); again.type = "button"; again.className = "vbtn"; again.textContent = "Try again";
       again.addEventListener("click", function () { showCurrent(); });
       row.appendChild(again);
+    }
+    if (i.source && d.status === 403) {
+      var site = document.createElement("a"); site.className = "vbtn"; site.target = "_blank"; site.rel = "noopener noreferrer";
+      site.href = i.source; site.textContent = "Watch on site"; row.appendChild(site);
     }
     var dl = document.createElement("a"); dl.className = "vbtn go"; dl.textContent = "Download"; dl.href = i.dl; dl.setAttribute("download", i.name);
     dl.addEventListener("click", function () { started[i.dl] = true; render(); });
