@@ -148,6 +148,10 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 .vmedia{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .vmedia video,.vmedia img{width:100%;height:100%;object-fit:contain;border-radius:10px;display:block;background:#000}
 .vmsg{color:#e8edf4}
+.viewer.theater{padding:0;background:#000;gap:0}
+.viewer.theater .vbar{display:none}
+.viewer.theater .vmedia video{border-radius:0}
+.vexit{position:fixed;z-index:60;top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 10px);width:40px;height:40px;border-radius:50%;border:0;background:rgba(30,36,48,.75);color:#fff;font-size:18px;display:grid;place-items:center;padding:0;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 .vproblem{max-width:420px;text-align:center;display:flex;flex-direction:column;gap:14px;padding:20px}
 .vproblem p{margin:0;font-size:15px;line-height:1.5}
 .vproblem .vbar{justify-content:center}
@@ -247,6 +251,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 
 <div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-labelledby="vname">
   <div class="vmedia" id="vmedia"></div>
+  <button type="button" class="vexit" id="vexit" aria-label="Exit full screen" hidden>✕</button>
   <div class="vbar">
     <button type="button" class="vbtn" id="vprev" aria-label="Previous">‹</button>
     <div class="vname" id="vname"></div>
@@ -822,28 +827,37 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   }
   // Full screen: iPhones use their own video player (rotation, normal controls);
   // other browsers use the standard full-screen mode.
+  // Some browsers (e.g. Aloha) accept the request but never go full screen, so
+  // if nothing happens within half a second, use the page's own full-screen view.
+  function isNativeFull(v) { return !!(v.webkitDisplayingFullscreen || document.fullscreenElement || document.webkitFullscreenElement); }
+  function theater(on) {
+    $("viewer").classList.toggle("theater", on);
+    $("vexit").hidden = !on;
+  }
   $("vfull").addEventListener("click", function () {
     var v = document.querySelector("#vmedia video");
     if (!v) return;
-    function go() {
-      try {
-        if (v.webkitEnterFullscreen) { v.webkitEnterFullscreen(); return; }
-        var el = v.requestFullscreen ? v : $("vmedia");
-        (el.requestFullscreen || el.webkitRequestFullscreen).call(el).catch(function () {});
-      } catch (e) { status("Full screen isn't available here. Turn your phone sideways instead.", "warn"); }
-    }
-    // iPhones only allow it once the video has started loading
-    if (v.readyState >= 1) go(); else { v.addEventListener("loadedmetadata", go, { once: true }); v.load(); }
+    try {
+      if (v.webkitEnterFullscreen && v.readyState >= 1) v.webkitEnterFullscreen();
+      else {
+        var el = v.requestFullscreen || v.webkitRequestFullscreen ? v : $("vmedia");
+        var req = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (req) { var r = req.call(el); if (r && r.catch) r.catch(function () {}); }
+      }
+    } catch (e) {}
     v.play().catch(function () {});
+    setTimeout(function () { if (!isNativeFull(v)) theater(true); }, 500);
   });
-  function closeViewer() { $("viewer").hidden = true; $("vmedia").textContent = ""; }
+  $("vexit").addEventListener("click", function () { theater(false); });
+  function closeViewer() {
+    theater(false); $("viewer").hidden = true; $("vmedia").textContent = ""; }
   $("vdl").addEventListener("click", function () { var i = viewList[viewPos]; if (i) { started[i.dl] = true; render(); } });
   $("vclose").addEventListener("click", closeViewer);
   $("vprev").addEventListener("click", function () { if (viewPos > 0) { viewPos--; showCurrent(); } });
   $("vnext").addEventListener("click", function () { if (viewPos < viewList.length - 1) { viewPos++; showCurrent(); } });
   document.addEventListener("keydown", function (e) {
     if ($("viewer").hidden) return;
-    if (e.key === "Escape") closeViewer(); else if (e.key === "ArrowLeft") $("vprev").click(); else if (e.key === "ArrowRight") $("vnext").click();
+    if (e.key === "Escape") { if ($("viewer").classList.contains("theater")) theater(false); else closeViewer(); } else if (e.key === "ArrowLeft") $("vprev").click(); else if (e.key === "ArrowRight") $("vnext").click();
   });
 
   // ---------- sign-in check ----------
