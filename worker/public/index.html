@@ -844,27 +844,39 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     var m = $("vmedia");
     if (m.querySelector(".fsoffer")) return;
     var box = document.createElement("div"); box.className = "fsoffer";
-    var t = document.createElement("p"); t.textContent = "This browser won't let pages go full screen. Open the video in its own full-screen player instead?";
-    var go = document.createElement("button"); go.type = "button"; go.className = "vbtn go"; go.textContent = "Open full-screen player";
-    go.addEventListener("click", function () { store("vdl:fsmode", "tab"); box.remove(); openInBrowserPlayer(v); });
-    var no = document.createElement("button"); no.type = "button"; no.className = "vbtn"; no.textContent = "Not now";
+    var t = document.createElement("p"); t.textContent = "Full screen didn't start. Tap Full screen again, or open the video in the browser's own player instead.";
+    var go = document.createElement("button"); go.type = "button"; go.className = "vbtn go"; go.textContent = "Open in browser player";
+    go.addEventListener("click", function () { store("vdl:fsmode2", "tab"); box.remove(); openInBrowserPlayer(v); });
+    var no = document.createElement("button"); no.type = "button"; no.className = "vbtn"; no.textContent = "Close";
     no.addEventListener("click", function () { box.remove(); });
     var row = document.createElement("div"); row.className = "vbar"; row.appendChild(no); row.appendChild(go);
     box.appendChild(t); box.appendChild(row); m.appendChild(box);
   }
+  // Same as the full-screen button in the video's own controls: ask for it right
+  // away, on the tap itself (iPhones refuse it a moment later).
+  function enterFull(v) {
+    try {
+      if (v.webkitEnterFullscreen) { v.webkitEnterFullscreen(); return true; }   // iPhone video player
+      var req = v.requestFullscreen || v.webkitRequestFullscreen;               // other browsers
+      if (req) { var r = req.call(v); if (r && r.catch) r.catch(function () {}); return true; }
+    } catch (e) { /* not ready yet */ }
+    return false;
+  }
   $("vfull").addEventListener("click", function () {
     var v = document.querySelector("#vmedia video");
     if (!v) return;
-    if (store("vdl:fsmode") === "tab") { openInBrowserPlayer(v); return; }
-    try {
-      if (v.webkitEnterFullscreen && v.readyState >= 1) v.webkitEnterFullscreen();
-      else {
-        var el = v.requestFullscreen || v.webkitRequestFullscreen ? v : $("vmedia");
-        var req = el.requestFullscreen || el.webkitRequestFullscreen;
-        if (req) { var r = req.call(el); if (r && r.catch) r.catch(function () {}); }
-      }
-    } catch (e) {}
-    setTimeout(function () { if (!isNativeFull(v)) offerBrowserPlayer(v); }, 600);
+    if (store("vdl:fsmode2") === "tab") { openInBrowserPlayer(v); return; }
+    var asked = v.readyState >= 1 && enterFull(v);
+    if (!asked) {
+      // Not prepared yet: start it (still on the tap) and go full screen as soon as it can.
+      var p = v.play(); if (p && p.catch) p.catch(function () {});
+      v.addEventListener("loadedmetadata", function () { enterFull(v); }, { once: true });
+      if (v.readyState >= 1) enterFull(v);
+    }
+    setTimeout(function () {
+      if (isNativeFull(v)) return;
+      offerBrowserPlayer(v);
+    }, 1200);
   });
   function closeViewer() { $("viewer").hidden = true; $("vmedia").textContent = ""; }
   $("vdl").addEventListener("click", function () { var i = viewList[viewPos]; if (i) { started[i.dl] = true; render(); } });
