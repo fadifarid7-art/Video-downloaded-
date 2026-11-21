@@ -281,6 +281,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   var mode = store("vdl:mode") === "auto" ? "auto" : "manual";
   var speed = store("vdl:speed") || "wait";
   var started = {};         // download link -> true once sent to the browser
+  var siteZip = null;       // a ZIP of the whole folder made by the site itself (Koofr)
   var manualNext = -1;      // index into the queue while stepping one at a time
   var viewList = [], viewPos = 0;
 
@@ -397,7 +398,7 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     lastRaw = raw; $("curlink").textContent = "";
     stopAuto(true); started = {}; manualNext = -1;
     $("scan").disabled = true; $("results").hidden = true;
-    var found = [], failed = [], title = "", n = 0, vias = [], notices = [], externals = [];
+    var found = [], failed = [], title = "", n = 0, vias = [], notices = [], externals = [], zips = [];
     $("extcard").hidden = true;
     function next() {
       if (n >= links.length) return Promise.resolve();
@@ -415,12 +416,14 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
           if (!title) title = res.d.title || u;
           if (res.d.via) { try { vias.push(new URL(res.d.via).host); } catch (er) {} }
           if (res.d.notice) notices.push(res.d.notice);
+          if (res.d.zip) zips.push(res.d.zip);
           (res.d.items || []).forEach(function (it) { if (!found.some(function (f) { return f.source && f.source === it.source; })) found.push(it); });
         }, function () { failed.push("couldn't reach the helper"); })
         .then(next);
     }
     next().then(function () {
       items = found.map(function (it, k) { it.order = k; return it; }); filter = "all";
+      siteZip = links.length === 1 && zips.length === 1 ? zips[0] : null;
       $("rtitle").textContent = links.length > 1 ? plural(links.length, "link") : (title.replace(/\s*\|\s*[^|]+$/, "") || links[0]);
       var tot = totalText(items);
       $("rsum").textContent = summary() + (tot ? " · " + tot + " total" : "");
@@ -505,9 +508,11 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       ? "Tap once per file. Your browser asks where to save each one."
       : "Starts each file for you (" + spd + "). Save each one as your browser asks.") + unkNote;
     $("shareAll").hidden = !CAN_SHARE;
-    $("zipAll").textContent = "Download all as ZIP" + sizeTag(q);
+    $("zipAll").textContent = siteZip ? "Download all as ZIP (made by " + siteZip.by + ")" + sizeTag(items.filter(function (i) { return i.dl; })) : "Download all as ZIP" + sizeTag(q);
     $("zipAll").disabled = zipping || running;
-    $("zipHint").textContent = CAN_STREAM_SAVE
+    $("zipHint").textContent = siteZip
+      ? siteZip.by + " packs the whole folder into one ZIP (every file, whatever the filter). Your browser asks where to save it."
+      : CAN_STREAM_SAVE
       ? "Packs every file into one ZIP, saved straight to the folder you pick."
       : IOS ? "Works in Safari for smaller folders. Aloha can't save a ZIP made this way."
       : "Packs every file into one ZIP. This browser keeps it in memory until it's finished, so Chrome or Brave is better for very large folders.";
@@ -723,8 +728,12 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     else if (zipAbort) zipAbort();
     else stopAuto(false);
   });
-  function menuOpened() { if (autoActive && waiting) { sawMenu = true; clearTimeout(autoTimer); autoTimer = null; updateStrip(); } }
+  // While the save menu is open the page waits. Some browsers never say the menu
+  // closed, so it also carries on when the page is touched again or after 45 s.
+  function menuOpened() { if (autoActive && waiting && !sawMenu) { sawMenu = true; schedule(45000); updateStrip(); } }
   function menuClosed() { if (autoActive && waiting && sawMenu) { waiting = false; sawMenu = false; schedule(900); updateStrip(); } }
+  document.addEventListener("pointerdown", function (e) { if (!e.target.closest || !e.target.closest("#strip")) menuClosed(); }, true);
+  window.addEventListener("pageshow", menuClosed);
   window.addEventListener("blur", menuOpened);
   window.addEventListener("focus", menuClosed);
   document.addEventListener("visibilitychange", function () { if (document.hidden) menuOpened(); else menuClosed(); });
@@ -787,6 +796,11 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     });
   }
   $("zipAll").addEventListener("click", async function () {
+    if (siteZip) {
+      location.href = siteZip.dl;     // a real address: the browser shows its save menu
+      status(siteZip.by + " is packing the folder. Pick where to save it when your browser asks; big folders can take a moment to start.", "ok");
+      return;
+    }
     var list = queue();
     if (!list.length || zipping) return;
     var total = list.reduce(function (a, i) { return a + (+i.size || 0); }, 0);

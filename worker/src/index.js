@@ -61,6 +61,7 @@ export default {
       if (url.pathname === "/api/scan") {
         const result = await scan(url.searchParams.get("url"), url.searchParams.get("all") === "1", url.searchParams.get("password"));
         await signItems(result.items, env);
+        if (result.zip) await signItems([result.zip], env);
         result.items.forEach((i) => { delete i.blocked; });
         return json(result);
       }
@@ -459,7 +460,16 @@ async function scanKoofr(link, password) {
     }
   };
   await walk(link.path, 0);
-  return { kind: "folder", title, items };
+  // Koofr builds a ZIP of a shared folder itself (its own app's "download all").
+  // Served through a signed link it's a real web address, so browsers like
+  // Aloha show their normal save menu for it.
+  const zipName = (title || "Koofr folder").replace(/[\\/:*?"<>|]+/g, " ").trim() + ".zip";
+  const zip = {
+    name: zipName,
+    dl: fileLink({ url: KOOFR + "/content/links/" + link.id + "/files/get/" + encodeURIComponent(zipName) + "?path=" + encodeURIComponent(link.path) + "&force" + pw, name: zipName, ref: KOOFR + "/links/" + link.id }),
+    by: "Koofr",
+  };
+  return { kind: "folder", title, items, zip };
 }
 
 // Folder listing whose items open /d/<id> file pages.
