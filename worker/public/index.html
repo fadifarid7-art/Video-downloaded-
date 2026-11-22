@@ -127,6 +127,22 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
 .kind{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
 .kind.videos{color:var(--video)}.kind.images{color:var(--image)}
 .sent{color:var(--ok);font-weight:600}
+.navrow{display:flex;align-items:center;gap:10px;margin-bottom:10px;min-width:0}
+.backbtn{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 12px;font-size:14px;font-weight:600;flex:none}
+.crumbs{display:flex;align-items:center;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:none;font-size:14px;white-space:nowrap}
+.crumbs::-webkit-scrollbar{display:none}
+.crumbs button{border:0;background:none;padding:4px 2px;color:var(--accent);font-size:14px}
+.crumbs .sep{color:var(--muted)}
+.crumbs .here{color:var(--fg);font-weight:600;padding:4px 2px}
+.folders{margin-bottom:14px}
+.flabel{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 2px 8px}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr));gap:8px}
+.fcard{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:left;min-width:0}
+.fcard .ficon{width:40px;height:40px;flex:none;border-radius:8px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-size:20px;overflow:hidden}
+.fcard .ficon img{width:100%;height:100%;object-fit:cover}
+.fcard .ftext{min-width:0}
+.fcard .fname{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fcard .fmeta{font-size:12px;color:var(--muted)}
 .onsite{color:var(--accent)}
 .dlbtn{width:42px;height:42px;flex:none;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;text-decoration:none;font-size:20px;font-weight:700}
 .dlbtn.off{background:var(--raised);color:var(--muted);font-size:11px;font-weight:600;pointer-events:none}
@@ -200,6 +216,10 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   </div>
 
   <section class="results" id="results" hidden>
+    <div class="navrow" id="navrow" hidden>
+      <button type="button" class="backbtn" id="backbtn">‹ Back</button>
+      <nav class="crumbs" id="crumbs" aria-label="Folder path"></nav>
+    </div>
     <div class="rhead">
       <div class="rtext">
         <div class="rtitle" id="rtitle"></div>
@@ -219,6 +239,11 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
         <button type="button" role="radio" id="vList" aria-label="List view" title="List">☰</button>
         <button type="button" role="radio" id="vGrid" aria-label="Grid view" title="Grid">▦</button>
       </div>
+    </div>
+
+    <div class="folders" id="folders" hidden>
+      <div class="flabel" id="flabel">Folders</div>
+      <div class="fgrid" id="fgrid"></div>
     </div>
 
     <div class="action" id="action">
@@ -283,6 +308,8 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
   var speed = store("vdl:speed") || "wait";
   var started = {};         // download link -> true once sent to the browser
   var siteZip = null;       // a ZIP of the whole folder made by the site itself (Koofr)
+  var folders = [], crumbs = [];  // subfolders of the folder on screen, and the path to it
+  var navStack = [], navigating = false;  // links of the folders we came from, for Back
   var manualNext = -1;      // index into the queue while stepping one at a time
   var viewList = [], viewPos = 0;
 
@@ -369,8 +396,8 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     syncClear();
     renderRecent(); $("url").focus();
   }
-  $("newlink").addEventListener("click", function () { expand(true); status(""); });
-  $("again").addEventListener("click", function () { $("url").value = lastRaw; syncClear(); runSearch(); });
+  $("newlink").addEventListener("click", function () { navStack = []; expand(true); status(""); });
+  $("again").addEventListener("click", function () { navigating = true; $("url").value = lastRaw; syncClear(); runSearch(); });
   function syncClear() { $("clearx").hidden = !$("url").value; }
   $("url").addEventListener("input", function () { syncClear(); renderRecent(); });
   $("clearx").addEventListener("click", function () {
@@ -399,7 +426,8 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
     lastRaw = raw; $("curlink").textContent = "";
     stopAuto(true); started = {}; manualNext = -1;
     $("scan").disabled = true; $("results").hidden = true;
-    var found = [], failed = [], title = "", n = 0, vias = [], notices = [], externals = [], zips = [];
+    var found = [], failed = [], title = "", n = 0, vias = [], notices = [], externals = [], zips = [], fold = [], crumb = [];
+    if (!navigating) navStack = [];
     $("extcard").hidden = true;
     function next() {
       if (n >= links.length) return Promise.resolve();
@@ -418,6 +446,8 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
           if (res.d.via) { try { vias.push(new URL(res.d.via).host); } catch (er) {} }
           if (res.d.notice) notices.push(res.d.notice);
           if (res.d.zip) zips.push(res.d.zip);
+          if (res.d.folders) fold = fold.concat(res.d.folders);
+          if (res.d.crumbs) crumb = res.d.crumbs;
           (res.d.items || []).forEach(function (it) { if (!found.some(function (f) { return f.source && f.source === it.source; })) found.push(it); });
         }, function () { failed.push("couldn't reach the helper"); })
         .then(next);
@@ -430,7 +460,10 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
       $("rsum").textContent = summary() + (tot ? " · " + tot + " total" : "");
       render();
       $("results").hidden = false;
-      if (items.length) { addRecent(raw); collapse(raw); }
+      folders = fold; crumbs = links.length === 1 ? crumb : [];
+      renderFolders();
+      if (items.length || folders.length) { if (!navigating) addRecent(raw); collapse(raw); }
+      navigating = false;
       var tail = failed.length ? " Couldn't read " + plural(failed.length, "link") + ": " + failed.join("; ") : "";
       if (externals.length) {
         var x = externals[0];
@@ -439,11 +472,53 @@ h1{font-size:22px;font-weight:700;margin:0 0 14px;letter-spacing:-.01em}
         $("extopen").textContent = "Open on " + (x.site || "the site");
         $("extcard").hidden = false;
       }
-      if (!items.length && externals.length) { $("results").hidden = true; status(tail.trim(), failed.length ? "warn" : ""); }
+      if (!items.length && folders.length && !externals.length) status(failed.length ? tail.trim() : "", failed.length ? "warn" : "");
+      else if (!items.length && externals.length) { $("results").hidden = true; status(tail.trim(), failed.length ? "warn" : ""); }
       else if (!items.length) status((failed.length ? "Nothing found." : "No videos or images on that page. Some sites only load them after you press play.") + tail, failed.length ? "err" : "warn");
       else { var vmsg = vias.length ? "Followed " + (vias.length === 1 ? "the link" : plural(vias.length, "link")) + " to " + vias.filter(function (h, k, a) { return a.indexOf(h) === k; }).join(", ") + "." : ""; var nmsg = notices.length ? " " + notices.join(" ") : ""; status((vmsg + nmsg + tail).trim(), notices.length || failed.length ? "warn" : vias.length ? "ok" : ""); }
     }).then(function () { $("scan").disabled = false; });
   });
+
+  // ---------- folders ----------
+  function goTo(link) {
+    navStack.push(lastRaw); navigating = true;
+    $("url").value = link; syncClear(); runSearch();
+    window.scrollTo(0, 0);
+  }
+  $("backbtn").addEventListener("click", function () {
+    if (!navStack.length) return;
+    var prev = navStack.pop(); navigating = true;
+    $("url").value = prev; syncClear(); runSearch();
+  });
+  function renderFolders() {
+    var grid = $("fgrid"); grid.textContent = "";
+    $("folders").hidden = !folders.length;
+    $("flabel").textContent = folders.length === 1 ? "1 folder" : folders.length + " folders";
+    folders.forEach(function (f) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "fcard";
+      var ic = document.createElement("span"); ic.className = "ficon";
+      if (f.thumb) { var im = document.createElement("img"); im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; im.src = f.thumb; im.onerror = function () { im.remove(); ic.textContent = "📁"; }; ic.appendChild(im); }
+      else ic.textContent = "📁";
+      var tx = document.createElement("span"); tx.className = "ftext";
+      var nm = document.createElement("div"); nm.className = "fname"; nm.textContent = f.name;
+      tx.appendChild(nm);
+      if (f.meta) { var mt = document.createElement("div"); mt.className = "fmeta"; mt.textContent = f.meta; tx.appendChild(mt); }
+      b.appendChild(ic); b.appendChild(tx);
+      b.addEventListener("click", function () { goTo(f.open); });
+      grid.appendChild(b);
+    });
+    // path + back
+    var nav = $("crumbs"); nav.textContent = "";
+    if (crumbs.length > 1) {
+      crumbs.forEach(function (c, k) {
+        if (k) { var sp = document.createElement("span"); sp.className = "sep"; sp.textContent = "›"; nav.appendChild(sp); }
+        if (k === crumbs.length - 1) { var h = document.createElement("span"); h.className = "here"; h.textContent = c.name; nav.appendChild(h); }
+        else { var cb = document.createElement("button"); cb.type = "button"; cb.textContent = c.name; cb.addEventListener("click", function () { goTo(c.open); }); nav.appendChild(cb); }
+      });
+    }
+    $("backbtn").hidden = !navStack.length;
+    $("navrow").hidden = !navStack.length && crumbs.length <= 1;
+  }
 
   // ---------- filters / sort ----------
   $("sort").value = sortMode;

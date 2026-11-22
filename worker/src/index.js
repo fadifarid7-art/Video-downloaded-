@@ -447,47 +447,49 @@ async function scanKoofr(link, password) {
     const info = await koofrJson("/api/v2/public/links/" + link.id, password, "the link");
     title = info.name || (info.link && info.link.name) || (info.file && info.file.name) || title;
   } catch (e) { if (e.code === "password" || e.status === 404) throw e; }
-  const items = [];
+  // One folder at a time: its files, plus its subfolders to open next.
+  const items = [], folders = [];
   const pw = password ? "&password=" + encodeURIComponent(password) : "";
-  let requests = 1;
-  const walk = async (path, depth) => {
-    if (items.length >= MAX_ITEMS || requests >= 40) return;
-    requests++;
-    const j = await koofrJson("/api/v2/public/links/" + link.id + "/bundle?path=" + encodeURIComponent(path), password, "the file list");
-    const entries = koofrEntries(j);
-    if (!entries.length && depth === 0 && !(Array.isArray(j) || j.files || j.file)) {
-      throw new Error("Koofr's file list came back in an unexpected layout (keys: " + Object.keys(j).slice(0, 8).join(", ") + "). Send this message to Claude.");
-    }
-    for (const f of entries) {
-      const p = joinPath(path, f.name);
-      if (f.dir) { if (depth < 3) await walk(p, depth + 1); continue; }
-      const type = kindOf(f.name) || (/^video\//.test(f.mime) ? "videos" : /^image\//.test(f.mime) ? "images" : "other");
-      const fileUrl = KOOFR + "/content/links/" + link.id + "/files/get/" + encodeURIComponent(f.name) + "?path=" + encodeURIComponent(p) + "&force" + pw;
-      items.push({
-        name: f.name, type, size: f.size ? String(f.size) : "", thumb: "",
-        dl: fileLink({ url: fileUrl, name: f.name, ref: KOOFR + "/links/" + link.id }),
-        source: KOOFR + "/links/" + link.id + "?path=" + encodeURIComponent(p),
-        folder: path === "/" ? "" : path,
-      });
-      if (items.length >= MAX_ITEMS) return;
-    }
-  };
-  await walk(link.path, 0);
+  const path = link.path || "/";
+  const linkUrl = (p) => KOOFR + "/links/" + link.id + (p && p !== "/" ? "?path=" + encodeURIComponent(p) : "");
+  const j = await koofrJson("/api/v2/public/links/" + link.id + "/bundle?path=" + encodeURIComponent(path), password, "the file list");
+  const entries = koofrEntries(j);
+  if (!entries.length && !(Array.isArray(j) || j.files || j.file)) {
+    throw new Error("Koofr's file list came back in an unexpected layout (keys: " + Object.keys(j).slice(0, 8).join(", ") + "). Send this message to Claude.");
+  }
+  for (const f of entries) {
+    const p = joinPath(path, f.name);
+    if (f.dir) { folders.push({ name: f.name, open: linkUrl(p) }); continue; }
+    if (items.length >= MAX_ITEMS) continue;
+    const type = kindOf(f.name) || (/^video\//.test(f.mime) ? "videos" : /^image\//.test(f.mime) ? "images" : "other");
+    const fileUrl = KOOFR + "/content/links/" + link.id + "/files/get/" + encodeURIComponent(f.name) + "?path=" + encodeURIComponent(p) + "&force" + pw;
+    items.push({
+      name: f.name, type, size: f.size ? String(f.size) : "", thumb: "",
+      dl: fileLink({ url: fileUrl, name: f.name, ref: KOOFR + "/links/" + link.id }),
+      source: linkUrl(p),
+    });
+  }
+  // Where we are: the shared folder, then each folder down to this one.
+  const crumbs = [{ name: title, open: linkUrl("/") }];
+  let acc = "";
+  for (const seg of path.split("/").filter(Boolean)) { acc += "/" + seg; crumbs.push({ name: seg, open: linkUrl(acc) }); }
+  const here = crumbs[crumbs.length - 1].name;
   // Koofr builds a ZIP of a shared folder itself (its own app's "download all").
   // Served through a signed link it's a real web address, so browsers like
   // Aloha show their normal save menu for it.
-  const zipName = (title || "Koofr folder").replace(/[\\/:*?"<>|]+/g, " ").trim() + ".zip";
+  const zipName = (here || "Koofr folder").replace(/[\\/:*?"<>|]+/g, " ").trim() + ".zip";
   const zip = {
     name: zipName,
     dl: fileLink({ url: KOOFR + "/content/links/" + link.id + "/files/get/" + encodeURIComponent(zipName) + "?path=" + encodeURIComponent(link.path) + "&force" + pw, name: zipName, ref: KOOFR + "/links/" + link.id }),
     by: "Koofr",
   };
-  return { kind: "folder", title, items, zip };
+  return { kind: "folder", title: here, items, folders, crumbs, zip };
 }
 
 // Folder listing whose items open /d/<id> file pages.
 function isFolderPage(html, base) {
-  return /^\/f\//.test(base.pathname) && /class="file-item[^"]*"[\s\S]{0,600}?\/d\/[A-Za-z0-9_-]+/.test(html);
+  return /^\/f\//.test(base.pathname) &&
+    (/class="file-item[^"]*"[\s\S]{0,600}?\/d\/[A-Za-z0-9_-]+/.test(html) || /class="[^"]*\bsubfolder-item\b/.test(html));
 }
 
 function readFolderItems(html, base) {
@@ -514,7 +516,27 @@ function readFolderItems(html, base) {
   return out;
 }
 
+// Subfolder cards on a folder page: <a class="subfolder-item" href="/f/<id>">,
+// with the name in .subfolder-name and a count in .subfolder-meta.
+function readSubfolders(html, base) {
+  const out = [], seen = new Set();
+  const re = /<a\b[^>]*class="[^"]*\bsubfolder-item\b[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const tag = m[0].slice(0, m[0].indexOf(">") + 1);
+    const href = absUrl(attr(tag, "href"), base);
+    if (!href || seen.has(href) || !/\/f\/[A-Za-z0-9_-]+/.test(new URL(href).pathname)) continue;
+    seen.add(href);
+    const inner = m[1];
+    const text = (cls) => decodeEntities(((inner.match(new RegExp('class="[^"]*\\b' + cls + '\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/', "i")) || [])[1] || "").replace(/<[^>]+>/g, "")).trim();
+    const img = inner.match(/<img\b[^>]*>/i);
+    out.push({ name: text("subfolder-name") || "Folder", meta: text("subfolder-meta"), thumb: img ? absUrl(attr(img[0], "src"), base) : "", open: href });
+  }
+  return out;
+}
+
 async function scanFolder(html, base, all, title) {
+  const folders = readSubfolders(html, base);
   let items = readFolderItems(html, base);
   const total = parseInt((html.match(/id="loadAllPagesBtn"[^>]*data-total="(\d+)"/) || html.match(/data-total="(\d+)"[^>]*id="loadAllPagesBtn"/) || [])[1] || "1", 10);
   if (all && total > 1) {
@@ -528,7 +550,7 @@ async function scanFolder(html, base, all, title) {
       }
     }
   }
-  return { kind: "folder", title, pages: total, allPages: all || total <= 1, items: items.slice(0, MAX_ITEMS) };
+  return { kind: "folder", title, pages: total, allPages: all || total <= 1, items: items.slice(0, MAX_ITEMS), folders };
 }
 
 // Single file page whose Download button asks the site for a one-time token.
